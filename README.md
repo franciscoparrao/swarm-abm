@@ -12,6 +12,9 @@ Motor de modelado basado en agentes (ABM) espacial en Rust — un
   (ChaCha8, portable entre plataformas).
 - `examples/schelling` — segregación de Schelling (1971).
 - `examples/sir` — SIR espacial (contagio en grilla).
+- `examples/difusion` — feromona depositada por caminantes que difunde
+  (`Grid2D::diffuse`, semántica NetLogo) y se evapora; converge al punto
+  fijo analítico.
 
 ## Uso rápido
 
@@ -19,6 +22,7 @@ Motor de modelado basado en agentes (ABM) espacial en Rust — un
 cargo test --workspace          # tests + doc-tests
 cargo run --release -p schelling [semilla]
 cargo run --release -p sir [semilla]
+cargo run --release -p difusion [semilla]
 ```
 
 Misma semilla → resultados bit a bit idénticos (scheduler y RNG son

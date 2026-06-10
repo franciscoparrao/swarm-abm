@@ -1,6 +1,11 @@
 [workspace]
 resolver = "3"
-members = ["crates/swarm-core", "examples/schelling", "examples/sir"]
+members = [
+    "crates/swarm-core",
+    "examples/difusion",
+    "examples/schelling",
+    "examples/sir",
+]
 
 [workspace.package]
 version = "0.1.0"

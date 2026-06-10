@@ -238,6 +238,15 @@ impl<T> Grid2D<T> {
             .map(|(i, c)| (Pos::new(i % self.width, i / self.width), c))
     }
 
+    /// Itera sobre todas las celdas como `(posición, &mut celda)`, fila por fila.
+    pub fn iter_mut(&mut self) -> impl Iterator<Item = (Pos, &mut T)> {
+        let width = self.width;
+        self.cells
+            .iter_mut()
+            .enumerate()
+            .map(move |(i, c)| (Pos::new(i % width, i / width), c))
+    }
+
     /// Desplaza `pos` por `(dx, dy)`: con torus envuelve, sin torus devuelve
     /// `None` si sale de la grilla.
     fn offset(&self, pos: Pos, dx: i64, dy: i64) -> Option<Pos> {
@@ -250,6 +259,48 @@ impl<T> Grid2D<T> {
         } else {
             None
         }
+    }
+}
+
+impl Grid2D<f64> {
+    /// Difunde el campo escalar un paso (semántica `diffuse` de NetLogo):
+    /// cada celda reparte la fracción `rate` de su valor en partes iguales
+    /// entre sus 8 (Moore) o 4 (Von Neumann) vecinas potenciales. Sin torus,
+    /// la porción que saldría de la grilla se queda en la celda. La masa
+    /// total se conserva siempre.
+    ///
+    /// La actualización es simultánea (doble buffer interno): el resultado
+    /// no depende del orden de recorrido.
+    ///
+    /// # Panics
+    /// Si `rate` no está en `[0, 1]`.
+    pub fn diffuse(&mut self, rate: f64, neighborhood: Neighborhood) {
+        assert!(
+            (0.0..=1.0).contains(&rate),
+            "rate de difusión fuera de [0, 1]: {rate}"
+        );
+        let divisor = match neighborhood {
+            Neighborhood::Moore => 8.0,
+            Neighborhood::VonNeumann => 4.0,
+        };
+        let mut next = vec![0.0; self.cells.len()];
+        for (i, &value) in self.cells.iter().enumerate() {
+            let pos = Pos::new(i % self.width, i / self.width);
+            let share = value * rate / divisor;
+            let mut given = 0.0;
+            for p in self.neighbor_positions(pos, neighborhood) {
+                next[p.y * self.width + p.x] += share;
+                given += share;
+            }
+            next[i] += value - given;
+        }
+        self.cells = next;
+    }
+
+    /// Suma de todas las celdas (masa total del campo).
+    #[must_use]
+    pub fn total(&self) -> f64 {
+        self.cells.iter().sum()
     }
 }
 
@@ -349,6 +400,59 @@ mod tests {
         assert_eq!(todo.len(), 6);
         assert_eq!(todo[0], (Pos::new(0, 0), 0));
         assert_eq!(todo[5], (Pos::new(2, 1), 12));
+    }
+
+    #[test]
+    fn diffuse_conserva_masa() {
+        for torus in [false, true] {
+            let mut g: Grid2D<f64> = Grid2D::new(7, 5).with_torus(torus);
+            g[Pos::new(3, 2)] = 100.0;
+            g[Pos::new(0, 0)] = 50.0;
+            for _ in 0..20 {
+                g.diffuse(0.5, Neighborhood::Moore);
+            }
+            assert!((g.total() - 150.0).abs() < 1e-9, "torus={torus}");
+        }
+    }
+
+    #[test]
+    fn diffuse_reparte_a_vecinas() {
+        let mut g: Grid2D<f64> = Grid2D::new(5, 5).with_torus(true);
+        let centro = Pos::new(2, 2);
+        g[centro] = 80.0;
+        g.diffuse(0.5, Neighborhood::Moore);
+        // El centro retiene 1 - rate; cada vecina Moore recibe rate/8.
+        assert!((g[centro] - 40.0).abs() < 1e-12);
+        for p in g.neighbor_positions(centro, Neighborhood::Moore) {
+            assert!((g[p] - 5.0).abs() < 1e-12);
+        }
+    }
+
+    #[test]
+    fn diffuse_sin_torus_borde_retiene() {
+        let mut g: Grid2D<f64> = Grid2D::new(5, 5);
+        let esquina = Pos::new(0, 0);
+        g[esquina] = 80.0;
+        g.diffuse(0.5, Neighborhood::Moore);
+        // La esquina solo tiene 3 vecinas: entrega 3·(rate/8) y retiene el resto.
+        assert!((g[esquina] - 65.0).abs() < 1e-12);
+        assert!((g.total() - 80.0).abs() < 1e-12);
+    }
+
+    #[test]
+    #[should_panic(expected = "fuera de [0, 1]")]
+    fn diffuse_rate_invalido_panic() {
+        let mut g: Grid2D<f64> = Grid2D::new(3, 3);
+        g.diffuse(1.5, Neighborhood::Moore);
+    }
+
+    #[test]
+    fn iter_mut_modifica_celdas() {
+        let mut g = Grid2D::from_fn(3, 2, |p| p.x as f64);
+        for (p, v) in g.iter_mut() {
+            *v += p.y as f64 * 10.0;
+        }
+        assert_eq!(g[Pos::new(2, 1)], 12.0);
     }
 
     #[test]
