@@ -7,9 +7,9 @@ Motor de modelado basado en agentes (ABM) espacial en Rust — un
 ## Estructura
 
 - `crates/swarm-core` — el motor: traits `Agent`/`Model`, scheduler
-  (orden fijo o aleatorio), `Grid2D` con vecindades Moore/Von Neumann y
-  torus opcional, `DataCollector` de series por paso y RNG sembrable
-  (ChaCha8, portable entre plataformas).
+  (orden fijo, aleatorio o **simultáneo en dos fases**), `Grid2D` con
+  vecindades Moore/Von Neumann y torus opcional, `DataCollector` de
+  series por paso y RNG sembrable (ChaCha8, portable entre plataformas).
 - `examples/schelling` — segregación de Schelling (1971).
 - `examples/sir` — SIR espacial (contagio en grilla).
 - `examples/difusion` — feromona depositada por caminantes que difunde
@@ -51,10 +51,19 @@ Los agentes viven en un `AgentSet` dentro del modelo. Para ejecutar
 préstamos, el runner usa el patrón **take-out**: saca al agente del set,
 corre su step con acceso mutable al modelo completo, y lo devuelve.
 
-## Roadmap (v0.2)
+La **activación simultánea** (`Activation::Simultaneous`) usa dos fases
+con garantía del compilador: en `decide(&mut self, id, &Model, rng)` el
+modelo llega *inmutable* — nadie puede escribir estado compartido antes
+del commit en `apply` (a diferencia de Mesa, donde es disciplina del
+usuario). Un modelo escrito como `decide`/`apply` corre bajo cualquier
+política: el `step` por defecto los encadena. Validado con el Juego de
+la Vida (`tests/simultaneous.rs`): el blinker oscila bajo simultánea y
+se rompe bajo secuencial.
 
-- Activación simultánea (dos fases) en el scheduler.
+## Roadmap (v0.3)
+
 - Grafos/redes como espacio; batch runs y barrido de parámetros (Rayon).
+- Benchmark formal vs Mesa/NetLogo (criterion).
 - Bindings PyO3 y visor WASM.
 - Reescritura de `debris-flow-abm` sobre el motor.
 

@@ -10,7 +10,8 @@
 //! - [`Model`](model::Model): estado global (agentes + entorno espacial).
 //! - [`Grid2D`](grid::Grid2D): grilla densa con vecindades Moore /
 //!   Von Neumann y topología toroidal opcional.
-//! - [`Schedule`](schedule::Schedule): orden de activación (fijo o aleatorio).
+//! - [`Schedule`](schedule::Schedule): activación en orden fijo, aleatorio o
+//!   simultánea en dos fases (`decide` con modelo inmutable + `apply`).
 //! - [`DataCollector`](data::DataCollector): series temporales por reporter.
 //! - [`Simulation`](sim::Simulation): runner con RNG sembrado.
 //!

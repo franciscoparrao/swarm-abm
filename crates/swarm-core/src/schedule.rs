@@ -15,12 +15,17 @@ pub enum Activation {
     /// para evitar artefactos de orden.
     #[default]
     Random,
+    /// Activación simultánea en dos fases: primero **todos** los agentes
+    /// ejecutan [`Agent::decide`](crate::agent::Agent::decide) observando el
+    /// mismo estado del mundo (modelo inmutable), y luego todos ejecutan
+    /// [`Agent::apply`](crate::agent::Agent::apply). Ambas fases recorren a
+    /// los agentes en orden de inserción (como Mesa); el orden solo afecta
+    /// el stream del RNG y la resolución de colisiones en `apply`.
+    Simultaneous,
 }
 
-/// Scheduler: decide en qué orden se activan los agentes en un paso.
-///
-/// La activación simultánea (dos fases: calcular y luego aplicar) queda
-/// para v0.2; mientras tanto se puede emular con buffers en el modelo.
+/// Scheduler: decide en qué orden y en cuántas fases se activan los agentes
+/// en un paso.
 #[derive(Debug, Clone, Copy, Default)]
 pub struct Schedule {
     activation: Activation,

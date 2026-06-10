@@ -4,7 +4,7 @@ use crate::agent::Agent;
 use crate::data::DataCollector;
 use crate::model::Model;
 use crate::rng::{SimRng, rng_from_seed};
-use crate::schedule::Schedule;
+use crate::schedule::{Activation, Schedule};
 
 /// Ejecuta un [`Model`] paso a paso, con RNG sembrado y recolección de datos.
 ///
@@ -55,12 +55,34 @@ impl<M: Model> Simulation<M> {
         self.model.before_step(&mut self.rng);
 
         let ids = self.model.agents().ids();
-        for id in self.schedule.order(ids, &mut self.rng) {
-            // Patrón take-out: el agente sale del set mientras corre su step,
-            // lo que permite pasarle `&mut self.model` sin doble préstamo.
-            if let Some(mut agent) = self.model.agents_mut().take(id) {
-                agent.step(id, &mut self.model, &mut self.rng);
-                self.model.agents_mut().put_back(id, agent);
+        match self.schedule.activation() {
+            Activation::Simultaneous => {
+                // Fase 1: todos deciden observando el mismo estado (modelo
+                // inmutable). Fase 2: todos aplican. Los agentes creados en
+                // `apply` recién se activan en el paso siguiente.
+                for &id in &ids {
+                    if let Some(mut agent) = self.model.agents_mut().take(id) {
+                        agent.decide(id, &self.model, &mut self.rng);
+                        self.model.agents_mut().put_back(id, agent);
+                    }
+                }
+                for &id in &ids {
+                    if let Some(mut agent) = self.model.agents_mut().take(id) {
+                        agent.apply(id, &mut self.model, &mut self.rng);
+                        self.model.agents_mut().put_back(id, agent);
+                    }
+                }
+            }
+            _ => {
+                for id in self.schedule.order(ids, &mut self.rng) {
+                    // Patrón take-out: el agente sale del set mientras corre
+                    // su step, lo que permite pasarle `&mut self.model` sin
+                    // doble préstamo.
+                    if let Some(mut agent) = self.model.agents_mut().take(id) {
+                        agent.step(id, &mut self.model, &mut self.rng);
+                        self.model.agents_mut().put_back(id, agent);
+                    }
+                }
             }
         }
 

@@ -19,7 +19,8 @@ agentes en tiempo real + WASM para correr en navegador.
 - [x] Recolectores de datos (series por step) y RNG sembrable (ChaCha8, determinismo bit a bit).
 - [x] API para definir modelos (trait `Agent`, `Model`; patrón take-out para el doble préstamo).
 - [x] Ejemplos: difusión, contagio (SIR espacial), Schelling — los 3 validados (difusión converge al punto fijo analítico).
-- [ ] (v0.2) Activación simultánea; grafos/redes; batch runs + barrido de parámetros; viz WASM.
+- [x] (v0.2) Activación simultánea en dos fases (`decide` con `&Model` inmutable + `apply`; validada con Game of Life).
+- [ ] (v0.3) Grafos/redes; batch runs + barrido de parámetros; viz WASM.
 
 ## Arquitectura tentativa
 - `swarm-core`: motor; modelos como crates de ejemplo.
@@ -39,7 +40,6 @@ Speedup ~67× sobre Mesa. Ver `validation/REPORT.md` y `validation/run_validatio
 - **SurtGIS**: rásters como entorno espacial de los agentes.
 
 ## Próximos pasos al retomar
-1. Activación simultánea (dos fases) en el scheduler.
-2. CI en GitHub Actions (test + clippy + fmt).
+1. CI en GitHub Actions (test + clippy + fmt).
 3. Benchmark formal vs Mesa/NetLogo (criterion + escalamiento de agentes).
 4. Reescribir debris-flow-abm sobre el motor para validar generalidad.

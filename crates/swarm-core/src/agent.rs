@@ -19,17 +19,49 @@ impl AgentId {
 
 /// Comportamiento de un agente.
 ///
-/// El agente recibe su propio `id`, acceso mutable al modelo completo y el
-/// RNG de la simulación. Mientras un agente ejecuta su `step`, está
-/// temporalmente *fuera* del [`AgentSet`] del modelo (patrón take-out), de
-/// modo que puede mutar el modelo —incluidos otros agentes— sin conflicto
-/// de préstamos.
+/// Mientras un agente ejecuta cualquiera de sus fases está temporalmente
+/// *fuera* del [`AgentSet`] del modelo (patrón take-out), de modo que puede
+/// acceder al modelo —incluidos otros agentes— sin conflicto de préstamos.
+///
+/// Hay dos estilos de implementación:
+///
+/// - **Secuencial** ([`Activation::Ordered`](crate::schedule::Activation) /
+///   `Random`): implementa solo [`step`](Self::step), que recibe el modelo
+///   mutable.
+/// - **Simultáneo** ([`Activation::Simultaneous`](crate::schedule::Activation)):
+///   implementa [`decide`](Self::decide) y [`apply`](Self::apply). En la fase
+///   de decisión **todos** los agentes observan el mismo estado del mundo: el
+///   modelo llega *inmutable* (`&Model`), así que el compilador garantiza que
+///   nadie escribe estado compartido antes del commit. La decisión se guarda
+///   en campos propios del agente y se materializa en `apply`.
+///
+/// Un modelo escrito en estilo `decide`/`apply` también funciona bajo
+/// activación secuencial: el `step` por defecto ejecuta `decide` + `apply`
+/// de inmediato.
 pub trait Agent: Sized {
     /// Modelo al que pertenece este agente.
     type Model;
 
-    /// Un paso de comportamiento del agente.
-    fn step(&mut self, id: AgentId, model: &mut Self::Model, rng: &mut SimRng);
+    /// Fase de decisión (activación simultánea): observa el modelo y registra
+    /// la decisión en `self`. No hace nada por defecto.
+    ///
+    /// Convención: los campos de decisión de otros agentes pueden ya estar
+    /// escritos en esta fase; lee solo su estado "actual", no sus decisiones.
+    fn decide(&mut self, _id: AgentId, _model: &Self::Model, _rng: &mut SimRng) {}
+
+    /// Fase de aplicación (activación simultánea): materializa en el modelo
+    /// lo decidido en [`decide`](Self::decide). No hace nada por defecto.
+    ///
+    /// Se ejecuta en orden de inserción; si dos decisiones colisionan (p. ej.
+    /// dos agentes eligieron la misma celda), resolver aquí re-verificando.
+    fn apply(&mut self, _id: AgentId, _model: &mut Self::Model, _rng: &mut SimRng) {}
+
+    /// Un paso de comportamiento bajo activación secuencial. Por defecto
+    /// ejecuta [`decide`](Self::decide) seguido de [`apply`](Self::apply).
+    fn step(&mut self, id: AgentId, model: &mut Self::Model, rng: &mut SimRng) {
+        self.decide(id, model, rng);
+        self.apply(id, model, rng);
+    }
 }
 
 /// Colección de agentes con identificadores estables.
