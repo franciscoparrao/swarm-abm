@@ -1,0 +1,18 @@
+[workspace]
+resolver = "3"
+members = ["crates/swarm-core", "examples/schelling", "examples/sir"]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/franciscoparrao/swarm-abm"
+
+[workspace.dependencies]
+swarm-core = { path = "crates/swarm-core" }
+rand = "0.9"
+rand_chacha = "0.9"
+
+[profile.release]
+lto = true
+codegen-units = 1

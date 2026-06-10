@@ -1,0 +1,86 @@
+//! Orden de activación de los agentes en cada paso.
+
+use rand::seq::SliceRandom;
+
+use crate::agent::AgentId;
+use crate::rng::SimRng;
+
+/// Política de activación de agentes.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum Activation {
+    /// Orden de inserción, fijo en todos los pasos (determinista trivial).
+    Ordered,
+    /// Permutación aleatoria nueva en cada paso, derivada del RNG sembrado
+    /// (determinista dada la semilla). Es el default y el estándar en ABM
+    /// para evitar artefactos de orden.
+    #[default]
+    Random,
+}
+
+/// Scheduler: decide en qué orden se activan los agentes en un paso.
+///
+/// La activación simultánea (dos fases: calcular y luego aplicar) queda
+/// para v0.2; mientras tanto se puede emular con buffers en el modelo.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct Schedule {
+    activation: Activation,
+}
+
+impl Schedule {
+    /// Crea un scheduler con la política dada.
+    #[must_use]
+    pub fn new(activation: Activation) -> Self {
+        Self { activation }
+    }
+
+    /// Política configurada.
+    #[must_use]
+    pub fn activation(&self) -> Activation {
+        self.activation
+    }
+
+    /// Devuelve los ids en el orden de activación de este paso.
+    #[must_use]
+    pub fn order(&self, mut ids: Vec<AgentId>, rng: &mut SimRng) -> Vec<AgentId> {
+        if self.activation == Activation::Random {
+            ids.shuffle(rng);
+        }
+        ids
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::agent::AgentSet;
+    use crate::rng::rng_from_seed;
+
+    fn ids(n: usize) -> Vec<AgentId> {
+        let mut set = AgentSet::new();
+        (0..n).map(|i| set.insert(i)).collect()
+    }
+
+    #[test]
+    fn ordered_preserva_el_orden() {
+        let mut rng = rng_from_seed(0);
+        let v = ids(10);
+        assert_eq!(
+            Schedule::new(Activation::Ordered).order(v.clone(), &mut rng),
+            v
+        );
+    }
+
+    #[test]
+    fn random_es_permutacion_determinista() {
+        let v = ids(50);
+        let s = Schedule::new(Activation::Random);
+
+        let a = s.order(v.clone(), &mut rng_from_seed(9));
+        let b = s.order(v.clone(), &mut rng_from_seed(9));
+        assert_eq!(a, b, "misma semilla, misma permutación");
+
+        let mut ordenada = a.clone();
+        ordenada.sort();
+        assert_eq!(ordenada, v, "es una permutación de los ids originales");
+    }
+}

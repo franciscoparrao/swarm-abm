@@ -1,0 +1,43 @@
+# swarm-abm
+
+Motor de modelado basado en agentes (ABM) espacial en Rust — un
+"Mesa/NetLogo moderno": millones de agentes, determinismo reproducible y
+(a futuro) targets Python y WASM.
+
+## Estructura
+
+- `crates/swarm-core` — el motor: traits `Agent`/`Model`, scheduler
+  (orden fijo o aleatorio), `Grid2D` con vecindades Moore/Von Neumann y
+  torus opcional, `DataCollector` de series por paso y RNG sembrable
+  (ChaCha8, portable entre plataformas).
+- `examples/schelling` — segregación de Schelling (1971).
+- `examples/sir` — SIR espacial (contagio en grilla).
+
+## Uso rápido
+
+```bash
+cargo test --workspace          # tests + doc-tests
+cargo run --release -p schelling [semilla]
+cargo run --release -p sir [semilla]
+```
+
+Misma semilla → resultados bit a bit idénticos (scheduler y RNG son
+deterministas). Ver el ejemplo de API completo en `crates/swarm-core/src/lib.rs`.
+
+## Diseño clave
+
+Los agentes viven en un `AgentSet` dentro del modelo. Para ejecutar
+`Agent::step(&mut self, id, &mut Model, &mut SimRng)` sin conflicto de
+préstamos, el runner usa el patrón **take-out**: saca al agente del set,
+corre su step con acceso mutable al modelo completo, y lo devuelve.
+
+## Roadmap (v0.2)
+
+- Activación simultánea (dos fases) en el scheduler.
+- Grafos/redes como espacio; batch runs y barrido de parámetros (Rayon).
+- Bindings PyO3 y visor WASM.
+- Reescritura de `debris-flow-abm` sobre el motor.
+
+## Licencia
+
+MIT OR Apache-2.0

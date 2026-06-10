@@ -1,0 +1,10 @@
+[package]
+name = "schelling"
+description = "Modelo de segregación de Schelling sobre swarm-core"
+publish = false
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+swarm-core = { workspace = true }

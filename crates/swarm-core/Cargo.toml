@@ -1,0 +1,11 @@
+[package]
+name = "swarm-core"
+description = "Motor de modelado basado en agentes espacial: scheduling, grillas, vecindades y reproducibilidad determinista"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+rand = { workspace = true }
+rand_chacha = { workspace = true }
