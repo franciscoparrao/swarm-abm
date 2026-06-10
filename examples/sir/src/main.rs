@@ -125,13 +125,28 @@ fn build(width: usize, height: usize, initial_infected: usize, seed: u64) -> Sir
     }
 }
 
+/// Valor de un flag `--nombre valor`, si está presente.
+fn arg_value<T: std::str::FromStr>(args: &[String], name: &str) -> Option<T> {
+    args.iter()
+        .position(|a| a == name)
+        .and_then(|i| args.get(i + 1))
+        .and_then(|v| v.parse().ok())
+}
+
 fn main() {
-    let seed: u64 = std::env::args()
-        .nth(1)
+    let args: Vec<String> = std::env::args().skip(1).collect();
+    let seed: u64 = args
+        .first()
+        .filter(|a| !a.starts_with("--"))
         .and_then(|s| s.parse().ok())
         .unwrap_or(42);
+    let csv = args.iter().any(|a| a == "--csv");
+    let width: usize = arg_value(&args, "--width").unwrap_or(100);
+    let height: usize = arg_value(&args, "--height").unwrap_or(100);
+    let infected: usize = arg_value(&args, "--infected").unwrap_or(10);
+    let max_steps: u64 = arg_value(&args, "--steps").unwrap_or(500);
 
-    let model = build(100, 100, 10, seed);
+    let model = build(width, height, infected, seed);
     let n = model.agents.len() as f64;
 
     let mut sim = Simulation::new(model, seed);
@@ -139,7 +154,12 @@ fn main() {
     sim.add_reporter("i", move |m: &Sir| m.count(Status::Infected) as f64 / n);
     sim.add_reporter("r", move |m: &Sir| m.count(Status::Recovered) as f64 / n);
 
-    let pasos = sim.run(500);
+    let pasos = sim.run(max_steps);
+
+    if csv {
+        print!("{}", sim.data().to_csv());
+        return;
+    }
 
     let i_serie = sim.data().series("i").unwrap_or(&[]);
     let (paso_pico, pico) =

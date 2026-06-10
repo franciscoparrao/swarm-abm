@@ -28,6 +28,22 @@ cargo run --release -p difusion [semilla]
 Misma semilla → resultados bit a bit idénticos (scheduler y RNG son
 deterministas). Ver el ejemplo de API completo en `crates/swarm-core/src/lib.rs`.
 
+## Validación: paridad numérica contra Mesa
+
+`validation/` contiene espejos exactos de Schelling y SIR escritos en
+[Mesa](https://mesa.readthedocs.io/) (Python) y un protocolo de paridad
+distribucional: 50 réplicas por motor, test z de dos muestras por métrica
+(α = 0.05). Resultado: **las 7 métricas en paridad** (|z| ≤ 1.22); las
+curvas medias de ensamble difieren < 0.021 en todo el horizonte. Detalle
+en `validation/REPORT.md`. En la misma configuración, swarm-core corre
+~67× más rápido que Mesa.
+
+```bash
+python3 -m venv validation/.venv
+validation/.venv/bin/pip install -r validation/mesa/requirements.txt
+./validation/run_validation.sh 50
+```
+
 ## Diseño clave
 
 Los agentes viven en un `AgentSet` dentro del modelo. Para ejecutar

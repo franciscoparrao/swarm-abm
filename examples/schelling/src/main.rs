@@ -131,11 +131,23 @@ fn build(width: usize, height: usize, density: f64, tolerance: f64, seed: u64) -
     }
 }
 
+/// Valor de un flag `--nombre valor`, si está presente.
+fn arg_value<T: std::str::FromStr>(args: &[String], name: &str) -> Option<T> {
+    args.iter()
+        .position(|a| a == name)
+        .and_then(|i| args.get(i + 1))
+        .and_then(|v| v.parse().ok())
+}
+
 fn main() {
-    let seed: u64 = std::env::args()
-        .nth(1)
+    let args: Vec<String> = std::env::args().skip(1).collect();
+    let seed: u64 = args
+        .first()
+        .filter(|a| !a.starts_with("--"))
         .and_then(|s| s.parse().ok())
         .unwrap_or(42);
+    let csv = args.iter().any(|a| a == "--csv");
+    let max_steps: u64 = arg_value(&args, "--steps").unwrap_or(200);
 
     let model = build(50, 50, 0.85, 0.375, seed);
     let n = model.agents.len();
@@ -144,8 +156,12 @@ fn main() {
     sim.add_reporter("fraccion_conforme", Schelling::fraction_happy);
     sim.add_reporter("similitud_media", Schelling::mean_similarity);
 
-    let max_steps = 200;
     let pasos = sim.run(max_steps);
+
+    if csv {
+        print!("{}", sim.data().to_csv());
+        return;
+    }
 
     println!("Schelling 50x50 (torus) | {n} agentes | tolerancia 0.375 | semilla {seed}");
     println!(

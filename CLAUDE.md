@@ -26,7 +26,9 @@ agentes en tiempo real + WASM para correr en navegador.
 - Targets: native (Rayon para ensembles) + Python (PyO3) + WASM (visor).
 
 ## Validación / paridad numérica
-Reproducir resultados canónicos (Schelling, SIR) y comparar contra Mesa.
+**HECHA (2026-06-10)**: paridad distribucional vs Mesa confirmada — 50 réplicas
+por motor, 7/7 métricas con |z| ≤ 1.22, curvas de ensamble Δ < 0.021.
+Speedup ~67× sobre Mesa. Ver `validation/REPORT.md` y `validation/run_validation.sh`.
 
 ## Venue objetivo
 **Environmental Modelling & Software** o **JASSS** (social simulation).
@@ -37,7 +39,7 @@ Reproducir resultados canónicos (Schelling, SIR) y comparar contra Mesa.
 - **SurtGIS**: rásters como entorno espacial de los agentes.
 
 ## Próximos pasos al retomar
-1. Paridad numérica: reproducir Schelling/SIR en Mesa y comparar curvas.
-2. Activación simultánea (dos fases) en el scheduler.
-3. CI en GitHub Actions (test + clippy + fmt).
+1. Activación simultánea (dos fases) en el scheduler.
+2. CI en GitHub Actions (test + clippy + fmt).
+3. Benchmark formal vs Mesa/NetLogo (criterion + escalamiento de agentes).
 4. Reescribir debris-flow-abm sobre el motor para validar generalidad.
