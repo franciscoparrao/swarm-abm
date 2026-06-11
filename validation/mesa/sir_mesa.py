@@ -9,6 +9,7 @@ aleatoria por paso, término cuando no quedan infectados.
 import argparse
 import csv
 import pathlib
+import time
 
 from mesa import Agent, Model
 from mesa.space import SingleGrid
@@ -78,6 +79,19 @@ def run_one(seed, width, height, infected, max_steps, out_dir):
         w.writerows(rows)
 
 
+def bench_one(seed, width, height, infected, max_steps):
+    """Corre una réplica midiendo solo la fase de simulación (sin setup ni
+    recolección de métricas) y reporta steps,ms — espejo de `sir --bench`."""
+    model = SirModel(width, height, infected, seed)
+    t0 = time.perf_counter()
+    step = 0
+    while step < max_steps and not model.finished():
+        model.step()
+        step += 1
+    ms = (time.perf_counter() - t0) * 1000.0
+    print(f"steps,ms\n{step},{ms:.3f}")
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--seeds", type=int, default=20)
@@ -85,8 +99,14 @@ def main():
     ap.add_argument("--height", type=int, default=50)
     ap.add_argument("--infected", type=int, default=5)
     ap.add_argument("--steps", type=int, default=300)
-    ap.add_argument("--out", type=pathlib.Path, required=True)
+    ap.add_argument("--out", type=pathlib.Path)
+    ap.add_argument("--bench", type=int, metavar="SEED", default=None)
     args = ap.parse_args()
+    if args.bench is not None:
+        bench_one(args.bench, args.width, args.height, args.infected, args.steps)
+        return
+    if args.out is None:
+        ap.error("--out es requerido salvo en modo --bench")
     args.out.mkdir(parents=True, exist_ok=True)
     for seed in range(args.seeds):
         run_one(seed, args.width, args.height, args.infected, args.steps, args.out)

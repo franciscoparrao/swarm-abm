@@ -17,6 +17,7 @@ repository = "https://github.com/franciscoparrao/swarm-abm"
 swarm-core = { path = "crates/swarm-core" }
 rand = "0.9"
 rand_chacha = "0.9"
+criterion = "0.5"
 
 [profile.release]
 lto = true

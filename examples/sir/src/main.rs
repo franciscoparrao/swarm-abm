@@ -150,6 +150,24 @@ fn main() {
     let n = model.agents.len() as f64;
 
     let mut sim = Simulation::new(model, seed);
+
+    // Modo benchmark: sin reporters (Mesa tampoco mide métricas en su modo
+    // --bench), solo la fase de simulación. Se reporta el mínimo de varias
+    // repeticiones para filtrar ruido del SO (la corrida es determinista).
+    if args.iter().any(|a| a == "--bench") {
+        let reps: u32 = arg_value(&args, "--bench-reps").unwrap_or(5);
+        let mut mejor_ms = f64::INFINITY;
+        let mut pasos = 0;
+        for _ in 0..reps {
+            let mut sim = Simulation::new(build(width, height, infected, seed), seed);
+            let t0 = std::time::Instant::now();
+            pasos = sim.run(max_steps);
+            mejor_ms = mejor_ms.min(t0.elapsed().as_secs_f64() * 1000.0);
+        }
+        println!("steps,ms\n{pasos},{mejor_ms:.3}");
+        return;
+    }
+
     sim.add_reporter("s", move |m: &Sir| m.count(Status::Susceptible) as f64 / n);
     sim.add_reporter("i", move |m: &Sir| m.count(Status::Infected) as f64 / n);
     sim.add_reporter("r", move |m: &Sir| m.count(Status::Recovered) as f64 / n);

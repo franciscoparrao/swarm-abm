@@ -44,6 +44,25 @@ validation/.venv/bin/pip install -r validation/mesa/requirements.txt
 ./validation/run_validation.sh 50
 ```
 
+## Benchmarks
+
+Cross-engine (mismo SIR, medición en proceso, mediana sobre réplicas;
+detalle y entorno en `validation/BENCHMARKS.md`):
+
+| Grilla | Agentes | Rust (ms/paso) | Mesa (ms/paso) | Speedup |
+|---|---|---|---|---|
+| 25×25 | 625 | 0.023 | 1.35 | 58× |
+| 50×50 | 2.500 | 0.142 | 8.23 | 58× |
+| 100×100 | 10.000 | 0.312 | 20.79 | 67× |
+| 200×200 | 40.000 | 1.401 | 63.19 | 45× |
+
+swarm-core sostiene **~20–30 millones de agente-pasos por segundo** en un
+hilo (i7-1270P); con 1 millón de agentes móviles, ~7 M/s (cache-bound).
+Microbenchmarks del motor con criterion: `cargo bench -p swarm-core`
+(escalamiento de caminantes 10k→1M, SIR end-to-end, Life simultáneo a
+37 M celdas/s, `diffuse`). Reproducir el cross-engine:
+`./validation/run_benchmark.sh`.
+
 ## Diseño clave
 
 Los agentes viven en un `AgentSet` dentro del modelo. Para ejecutar
