@@ -1,6 +1,6 @@
 //! Runner de la simulación: [`Simulation`].
 
-use crate::agent::Agent;
+use crate::agent::{Agent, AgentId};
 use crate::data::DataCollector;
 use crate::model::Model;
 use crate::rng::{SimRng, rng_from_seed};
@@ -19,6 +19,9 @@ pub struct Simulation<M: Model> {
     rng: SimRng,
     collector: DataCollector<M>,
     steps_done: u64,
+    /// Buffer de orden de activación, reutilizado entre pasos para no
+    /// asignar un `Vec` de ids por paso (relevante con millones de agentes).
+    order_buf: Vec<AgentId>,
 }
 
 impl<M: Model> Simulation<M> {
@@ -31,6 +34,7 @@ impl<M: Model> Simulation<M> {
             rng: rng_from_seed(seed),
             collector: DataCollector::new(),
             steps_done: 0,
+            order_buf: Vec::new(),
         }
     }
 
@@ -54,19 +58,21 @@ impl<M: Model> Simulation<M> {
     pub fn step(&mut self) {
         self.model.before_step(&mut self.rng);
 
-        let ids = self.model.agents().ids();
+        self.model.agents().collect_ids_into(&mut self.order_buf);
         match self.schedule.activation() {
             Activation::Simultaneous => {
                 // Fase 1: todos deciden observando el mismo estado (modelo
                 // inmutable). Fase 2: todos aplican. Los agentes creados en
                 // `apply` recién se activan en el paso siguiente.
-                for &id in &ids {
+                for i in 0..self.order_buf.len() {
+                    let id = self.order_buf[i];
                     if let Some(mut agent) = self.model.agents_mut().take(id) {
                         agent.decide(id, &self.model, &mut self.rng);
                         self.model.agents_mut().put_back(id, agent);
                     }
                 }
-                for &id in &ids {
+                for i in 0..self.order_buf.len() {
+                    let id = self.order_buf[i];
                     if let Some(mut agent) = self.model.agents_mut().take(id) {
                         agent.apply(id, &mut self.model, &mut self.rng);
                         self.model.agents_mut().put_back(id, agent);
@@ -74,7 +80,10 @@ impl<M: Model> Simulation<M> {
                 }
             }
             _ => {
-                for id in self.schedule.order(ids, &mut self.rng) {
+                self.schedule
+                    .order_in_place(&mut self.order_buf, &mut self.rng);
+                for i in 0..self.order_buf.len() {
+                    let id = self.order_buf[i];
                     // Patrón take-out: el agente sale del set mientras corre
                     // su step, lo que permite pasarle `&mut self.model` sin
                     // doble préstamo.

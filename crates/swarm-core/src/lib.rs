@@ -33,12 +33,12 @@
 //!     type Model = World;
 //!
 //!     fn step(&mut self, _id: AgentId, world: &mut World, rng: &mut SimRng) {
-//!         let destinos: Vec<Pos> = world
-//!             .visits
-//!             .neighbor_positions(self.pos, Neighborhood::Moore)
-//!             .collect();
-//!         self.pos = destinos[rng.random_range(0..destinos.len())];
-//!         world.visits[self.pos] += 1;
+//!         if let Some(destino) =
+//!             world.visits.random_neighbor(self.pos, Neighborhood::Moore, rng)
+//!         {
+//!             self.pos = destino;
+//!             world.visits[self.pos] += 1;
+//!         }
 //!     }
 //! }
 //!

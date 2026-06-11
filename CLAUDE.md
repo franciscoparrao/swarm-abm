@@ -40,13 +40,14 @@ Speedup ~67× sobre Mesa. Ver `validation/REPORT.md` y `validation/run_validatio
 - **SurtGIS**: rásters como entorno espacial de los agentes.
 
 ## Benchmarks
-**HECHOS (2026-06-10)**: cross-engine SIR vs Mesa **45–67×** (25²→200²,
-mediana, medición en proceso); criterion: 29M agente-pasos/s (10k walkers),
-7M/s (1M walkers — cache-bound, optimizar buffer de vecinos), Life simultáneo
-37M celdas/s, SIR 50×50 completo en 7 ms. Ver `validation/BENCHMARKS.md` y
+**HECHOS (2026-06-10/11)**: cross-engine SIR vs Mesa **45–67×** (25²→200²,
+mediana, medición en proceso); criterion post-optimización: 38M
+agente-pasos/s (10k walkers), 12M/s (1M walkers), Life simultáneo 37M
+celdas/s, SIR 50×50 completo en 7 ms. Hot path sin allocaciones: buffer de
+orden reutilizado en Simulation + `Grid2D::random_neighbor` (mejora +30% a
++74% según escala). Ver `validation/BENCHMARKS.md` y
 `crates/swarm-core/benches/engine.rs`. NetLogo pendiente (requiere JVM).
 
 ## Próximos pasos al retomar
 1. CI en GitHub Actions (test + clippy + fmt).
 2. Reescribir debris-flow-abm sobre el motor para validar generalidad.
-3. Optimización: reusar buffer de vecinos (1M agentes es cache/alloc-bound).

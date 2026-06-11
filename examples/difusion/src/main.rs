@@ -26,12 +26,13 @@ impl Agent for Walker {
     type Model = World;
 
     fn step(&mut self, _id: AgentId, world: &mut World, rng: &mut SimRng) {
-        let destinos: Vec<Pos> = world
+        if let Some(destino) = world
             .field
-            .neighbor_positions(self.pos, Neighborhood::Moore)
-            .collect();
-        self.pos = destinos[rng.random_range(0..destinos.len())];
-        world.field[self.pos] += world.deposit;
+            .random_neighbor(self.pos, Neighborhood::Moore, rng)
+        {
+            self.pos = destino;
+            world.field[self.pos] += world.deposit;
+        }
     }
 }
 

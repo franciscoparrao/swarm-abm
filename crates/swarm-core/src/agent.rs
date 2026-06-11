@@ -141,11 +141,21 @@ impl<A> AgentSet<A> {
     /// Identificadores de todos los agentes vivos, en orden de inserción.
     #[must_use]
     pub fn ids(&self) -> Vec<AgentId> {
-        self.slots
-            .iter()
-            .enumerate()
-            .filter_map(|(i, s)| s.as_ref().map(|_| AgentId(i)))
-            .collect()
+        let mut out = Vec::with_capacity(self.live);
+        self.collect_ids_into(&mut out);
+        out
+    }
+
+    /// Vuelca los ids vivos en `out` (lo limpia primero), reutilizando su
+    /// capacidad. Evita asignar un `Vec` nuevo por paso en hot loops.
+    pub fn collect_ids_into(&self, out: &mut Vec<AgentId>) {
+        out.clear();
+        out.extend(
+            self.slots
+                .iter()
+                .enumerate()
+                .filter_map(|(i, s)| s.as_ref().map(|_| AgentId(i))),
+        );
     }
 
     /// Itera sobre `(id, &agente)` en orden de inserción.

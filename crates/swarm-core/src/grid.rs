@@ -2,6 +2,10 @@
 
 use std::ops::{Index, IndexMut};
 
+use rand::Rng;
+
+use crate::rng::SimRng;
+
 /// Posición discreta `(x, y)` en una grilla. `x` es columna, `y` es fila.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct Pos {
@@ -220,6 +224,27 @@ impl<T> Grid2D<T> {
         Neighbors { buf, len, i: 0 }
     }
 
+    /// Una posición vecina uniforme al azar, sin asignar memoria.
+    ///
+    /// Equivale a recolectar [`neighbor_positions`](Self::neighbor_positions)
+    /// y elegir un índice al azar (consume un solo draw del RNG), pero sin
+    /// el `Vec` intermedio — importante en hot loops con muchos agentes.
+    /// Devuelve `None` si la posición no tiene vecinas (grilla 1×1 sin torus).
+    #[must_use]
+    pub fn random_neighbor(
+        &self,
+        pos: Pos,
+        neighborhood: Neighborhood,
+        rng: &mut SimRng,
+    ) -> Option<Pos> {
+        let vecinas = self.neighbor_positions(pos, neighborhood);
+        let n = vecinas.len();
+        if n == 0 {
+            return None;
+        }
+        Some(vecinas.buf[rng.random_range(0..n)])
+    }
+
     /// Itera sobre `(posición, &celda)` de las vecinas de `pos`.
     pub fn neighbors(
         &self,
@@ -400,6 +425,31 @@ mod tests {
         assert_eq!(todo.len(), 6);
         assert_eq!(todo[0], (Pos::new(0, 0), 0));
         assert_eq!(todo[5], (Pos::new(2, 1), 12));
+    }
+
+    #[test]
+    fn random_neighbor_es_vecina_valida_y_determinista() {
+        use crate::rng::rng_from_seed;
+        let g: Grid2D<u8> = Grid2D::new(5, 5).with_torus(true);
+        let centro = Pos::new(2, 2);
+        let vecinas: HashSet<Pos> = g.neighbor_positions(centro, Neighborhood::Moore).collect();
+
+        let mut rng = rng_from_seed(3);
+        for _ in 0..100 {
+            let p = g
+                .random_neighbor(centro, Neighborhood::Moore, &mut rng)
+                .expect("hay vecinas");
+            assert!(vecinas.contains(&p));
+        }
+
+        // Mismo seed, misma secuencia de elecciones.
+        let secuencia = |seed| {
+            let mut rng = rng_from_seed(seed);
+            (0..20)
+                .map(|_| g.random_neighbor(centro, Neighborhood::Moore, &mut rng))
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(secuencia(9), secuencia(9));
     }
 
     #[test]

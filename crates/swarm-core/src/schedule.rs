@@ -44,12 +44,17 @@ impl Schedule {
         self.activation
     }
 
-    /// Devuelve los ids en el orden de activación de este paso.
-    #[must_use]
-    pub fn order(&self, mut ids: Vec<AgentId>, rng: &mut SimRng) -> Vec<AgentId> {
+    /// Reordena `ids` in situ según la política de este paso (sin asignar).
+    pub fn order_in_place(&self, ids: &mut [AgentId], rng: &mut SimRng) {
         if self.activation == Activation::Random {
             ids.shuffle(rng);
         }
+    }
+
+    /// Devuelve los ids en el orden de activación de este paso.
+    #[must_use]
+    pub fn order(&self, mut ids: Vec<AgentId>, rng: &mut SimRng) -> Vec<AgentId> {
+        self.order_in_place(&mut ids, rng);
         ids
     }
 }

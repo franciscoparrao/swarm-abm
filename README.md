@@ -56,12 +56,14 @@ detalle y entorno en `validation/BENCHMARKS.md`):
 | 100×100 | 10.000 | 0.312 | 20.79 | 67× |
 | 200×200 | 40.000 | 1.401 | 63.19 | 45× |
 
-swarm-core sostiene **~20–30 millones de agente-pasos por segundo** en un
-hilo (i7-1270P); con 1 millón de agentes móviles, ~7 M/s (cache-bound).
-Microbenchmarks del motor con criterion: `cargo bench -p swarm-core`
-(escalamiento de caminantes 10k→1M, SIR end-to-end, Life simultáneo a
-37 M celdas/s, `diffuse`). Reproducir el cross-engine:
-`./validation/run_benchmark.sh`.
+swarm-core sostiene **~25–38 millones de agente-pasos por segundo** en un
+hilo (i7-1270P); con 1 millón de agentes móviles, ~12 M/s (~12 pasos/s
+en vivo). El runner reutiliza el buffer de orden entre pasos y
+`Grid2D::random_neighbor` elige vecino sin asignar memoria — el camino
+caliente del motor no aloca. Microbenchmarks con criterion:
+`cargo bench -p swarm-core` (escalamiento de caminantes 10k→1M, SIR
+end-to-end, Life simultáneo a 37 M celdas/s, `diffuse`). Reproducir el
+cross-engine: `./validation/run_benchmark.sh`.
 
 ## Diseño clave
 
