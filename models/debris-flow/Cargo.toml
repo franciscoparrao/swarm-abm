@@ -1,0 +1,18 @@
+[package]
+name = "debris-flow"
+description = "Modelo ABM de flujos de detritos (V4 HYBRID v2, Atacama 2015) sobre swarm-core"
+publish = false
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+swarm-core = { workspace = true }
+serde_json = { workspace = true }
+
+[lib]
+name = "debris_flow"
+
+[[bin]]
+name = "debris-flow"
+path = "src/main.rs"

@@ -15,6 +15,12 @@ Motor de modelado basado en agentes (ABM) espacial en Rust — un
 - `examples/difusion` — feromona depositada por caminantes que difunde
   (`Grid2D::diffuse`, semántica NetLogo) y se evapora; converge al punto
   fijo analítico.
+- `models/debris-flow` — **modelo cliente real**: flujos de detritos del
+  evento Atacama 2015 (Copiapó, DEM 5871×5422 @ 30 m), port fiel de
+  [debris-flow-abm](https://github.com/franciscoparrao/debris-flow-abm)
+  (Mesa/Python). Paridad distribucional verificada contra el código
+  original sobre insumos idénticos y **~100× más rápido** (130–240 s →
+  1.2–4 s por corrida); detalles en `models/debris-flow/PARITY.md`.
 
 ## Uso rápido
 

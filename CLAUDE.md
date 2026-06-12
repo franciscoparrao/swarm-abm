@@ -35,7 +35,12 @@ Speedup ~67× sobre Mesa. Ver `validation/REPORT.md` y `validation/run_validatio
 **Environmental Modelling & Software** o **JASSS** (social simulation).
 
 ## Conexiones con tu ecosistema
-- **debris-flow-abm**: primer modelo cliente; valida el diseño del motor.
+- **debris-flow-abm**: ✅ REESCRITO sobre el motor (2026-06-11, `models/debris-flow/`):
+  port fiel del V4 HYBRID v2, paridad distribucional verificada corriendo el
+  Python original sobre insumos idénticos (IoU/área/flujos/trayectorias
+  solapados), speedup ~100× (130-240s → 1.2-4s por corrida Copiapó 31.8M
+  celdas), y ahora reproducible (el original usaba np.random global sin
+  semilla). Ver `models/debris-flow/PARITY.md`.
 - **firespread**: variante ABM de propagación.
 - **SurtGIS**: rásters como entorno espacial de los agentes.
 
@@ -50,4 +55,5 @@ orden reutilizado en Simulation + `Grid2D::random_neighbor` (mejora +30% a
 
 ## Próximos pasos al retomar
 1. CI en GitHub Actions (test + clippy + fmt).
-2. Reescribir debris-flow-abm sobre el motor para validar generalidad.
+2. Borrador del paper (EMS/JASSS): ya están las 4 patas — determinismo,
+   paridad Mesa, benchmarks 45-67x, caso real debris-flow ~100x.

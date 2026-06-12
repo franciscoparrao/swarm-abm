@@ -1,0 +1,12 @@
+//! Modelo ABM de flujos de detritos (evento Atacama 2015) sobre swarm-core.
+//!
+//! Port fiel de `debris-flow-abm` (Mesa/Python, V4 HYBRID v2). Es el primer
+//! "modelo cliente" real del motor: valida que la API generaliza más allá de
+//! los ejemplos canónicos (agentes heterogéneos vía enum, spawning dinámico,
+//! bajas diferidas, entorno multi-capa raster, métricas espaciales).
+
+pub mod model;
+pub mod raster;
+
+pub use model::{DebrisAgent, DebrisFlowModel, Flow, Layers, Metrics, Params, Raindrop, evaluate};
+pub use raster::{CopiapoData, Window, load};
