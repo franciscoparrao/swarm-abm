@@ -22,7 +22,7 @@ fn layers_plano(width: usize, height: usize, slope_frac: f32) -> Layers {
 }
 
 fn sim(layers: Layers, params: Params, seed: u64) -> Simulation<DebrisFlowModel> {
-    let model = DebrisFlowModel::new(layers, params, 30.0, seed);
+    let model = DebrisFlowModel::new(std::sync::Arc::new(layers), params, 30.0, seed);
     Simulation::new(model, seed).with_schedule(Schedule::new(Activation::Ordered))
 }
 

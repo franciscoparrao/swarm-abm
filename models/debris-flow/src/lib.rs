@@ -8,5 +8,7 @@
 pub mod model;
 pub mod raster;
 
-pub use model::{DebrisAgent, DebrisFlowModel, Flow, Layers, Metrics, Params, Raindrop, evaluate};
+pub use model::{
+    DebrisAgent, DebrisFlowModel, Flow, Layers, Metrics, Params, Raindrop, evaluate, run_and_score,
+};
 pub use raster::{CopiapoData, Window, load};

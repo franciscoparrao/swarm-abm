@@ -21,6 +21,8 @@
 //! - El softmax del original usaba el RNG global de numpy (¡sin semilla!);
 //!   aquí usa el [`SimRng`] de la simulación: el port es reproducible.
 
+use std::sync::Arc;
+
 use swarm_core::prelude::*;
 
 use crate::raster::Window;
@@ -100,6 +102,37 @@ impl Params {
     }
 }
 
+impl Params {
+    /// Calibración propia por Differential Evolution sobre el port Rust,
+    /// objetivo ROBUSTO = IoU medio sobre 3 semillas (`bin/calibrate
+    /// --eval-seeds 3`, 672×3 simulaciones en ~5 min; `data/best_params_de.json`).
+    /// Notablemente, el objetivo multi-semilla colapsa la temperatura
+    /// estocástica a ~0.02 (casi determinista): calibrar contra una sola
+    /// semilla la inflaba a ~1.8 sobreajustando al ruido.
+    #[must_use]
+    pub fn preset_de() -> Self {
+        Self {
+            n_rain_agents: 50,
+            rain_threshold: 0.3,
+            sediment_threshold: 0.092_558_033_987_087_35,
+            susceptibility_threshold: 0.197_823_133_809_339_7,
+            friction_coefficient: 0.089_147_511_065_123_7,
+            coastal_slope_threshold: 0.01,
+            coastal_spread_factor: 3.393_513_238_230_253_7,
+            coastal_volume_threshold: 1.171_472_310_161_277_8,
+            volume_decay_flat: 0.979_308_381_555_189_5,
+            volume_decay_slope: 0.993_423_792_099_001_9,
+            stream_attraction_weight: 10.0,
+            max_velocity: 22.201_013_730_875_697,
+            min_velocity: 0.653_928_601_682_270_1,
+            critical_slope: 0.01,
+            slope_acceleration_factor: 1.967_888_613_326_076,
+            stochastic_temperature: 0.020_193_507_448_305_392,
+            footprint_radius: 4.0,
+        }
+    }
+}
+
 /// Capas raster de entrada (todas alineadas a la misma grilla).
 #[derive(Clone)]
 pub struct Layers {
@@ -144,7 +177,9 @@ pub enum DebrisAgent {
 
 pub struct DebrisFlowModel {
     pub agents: AgentSet<DebrisAgent>,
-    pub layers: Layers,
+    /// Capas de entrada compartidas: `Arc` para que muchas evaluaciones
+    /// (calibración) reusen el stack sin copiar ~1.2 GB por corrida.
+    pub layers: Arc<Layers>,
     pub params: Params,
     pub pixel_size: f64,
     /// Hora de simulación (1-based: avanza antes de activar agentes).
@@ -164,7 +199,7 @@ pub struct DebrisFlowModel {
 }
 
 impl DebrisFlowModel {
-    pub fn new(layers: Layers, params: Params, pixel_size: f64, seed: u64) -> Self {
+    pub fn new(layers: Arc<Layers>, params: Params, pixel_size: f64, seed: u64) -> Self {
         let width = layers.dem.width();
         let height = layers.dem.height();
 
@@ -479,6 +514,24 @@ impl Flow {
         };
         v.clamp(p.min_velocity, p.max_velocity)
     }
+}
+
+/// Corre una simulación completa con `params`/`seed` y evalúa el footprint
+/// contra el ground truth. Encapsula el ciclo crear→simular→evaluar para
+/// que la calibración (que comparte `layers` vía `Arc`) lo invoque en bucle.
+pub fn run_and_score(
+    layers: &Arc<Layers>,
+    ground_truth: &Grid2D<f32>,
+    window: Window,
+    pixel_size: f64,
+    params: Params,
+    seed: u64,
+    steps: u64,
+) -> Metrics {
+    let model = DebrisFlowModel::new(Arc::clone(layers), params, pixel_size, seed);
+    let mut sim = Simulation::new(model, seed).with_schedule(Schedule::new(Activation::Ordered));
+    sim.run(steps);
+    evaluate(&sim.model.footprint, ground_truth, window, pixel_size)
 }
 
 /// Métricas de validación espacial contra el ground truth, sobre la ventana

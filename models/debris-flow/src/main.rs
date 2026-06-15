@@ -27,6 +27,7 @@ fn main() {
 
     let mut params = match arg_value::<String>(&args, "--preset").as_deref() {
         Some("18iters") => Params::preset_18iters(),
+        Some("de") => Params::preset_de(),
         _ => Params::default(),
     };
     if let Some(n) = arg_value::<usize>(&args, "--agents") {
@@ -53,11 +54,16 @@ fn main() {
         params.n_rain_agents, params.stochastic_temperature
     );
 
+    let layers = std::sync::Arc::new(data.layers);
     let mut ious = Vec::new();
     for seed in seed0..seed0 + n_seeds {
         let t0 = Instant::now();
-        let model =
-            DebrisFlowModel::new(data.layers.clone(), params.clone(), data.pixel_size, seed);
+        let model = DebrisFlowModel::new(
+            std::sync::Arc::clone(&layers),
+            params.clone(),
+            data.pixel_size,
+            seed,
+        );
         let mut sim =
             Simulation::new(model, seed).with_schedule(Schedule::new(Activation::Ordered));
 

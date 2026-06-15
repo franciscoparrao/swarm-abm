@@ -21,6 +21,11 @@ Motor de modelado basado en agentes (ABM) espacial en Rust — un
   (Mesa/Python). Paridad distribucional verificada contra el código
   original sobre insumos idénticos y **~100× más rápido** (130–240 s →
   1.2–4 s por corrida); detalles en `models/debris-flow/PARITY.md`.
+  Incluye **calibración por Differential Evolution** (`bin/calibrate`,
+  rayon + stack compartido): lo que en Python era una calibración de
+  ~11–34 h cabe en 1–5 min, y duplica el IoU medio del modelo
+  (0.074 → 0.158) con validación de robustez — ver
+  `models/debris-flow/CALIBRATION.md`.
 
 ## Uso rápido
 

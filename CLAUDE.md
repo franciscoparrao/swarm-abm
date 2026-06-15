@@ -53,7 +53,15 @@ orden reutilizado en Simulation + `Grid2D::random_neighbor` (mejora +30% a
 +74% según escala). Ver `validation/BENCHMARKS.md` y
 `crates/swarm-core/benches/engine.rs`. NetLogo pendiente (requiere JVM).
 
+## Calibración (debris-flow)
+**HECHA (2026-06-14)**: Differential Evolution sobre el port Rust
+(`models/debris-flow/src/bin/calibrate.rs`, rayon + Arc<Layers> compartido).
+672 evals en ~70s (single-seed) / 2016 sims en ~5min (robusto 3 semillas);
+equivalente Python secuencial ~11-34h → ~400x. Detectó y corrigió
+sobreajuste a semilla única (T colapsa 1.81→0.02 con objetivo multi-semilla);
+IoU medio 0.074→0.158 (8 semillas). Ver models/debris-flow/CALIBRATION.md.
+
 ## Próximos pasos al retomar
 1. CI en GitHub Actions (test + clippy + fmt).
-2. Borrador del paper (EMS/JASSS): ya están las 4 patas — determinismo,
-   paridad Mesa, benchmarks 45-67x, caso real debris-flow ~100x.
+2. Borrador del paper (EMS/JASSS): patas — determinismo, paridad Mesa,
+   benchmarks 45-67x, caso real debris-flow ~100x + calibración robusta ~400x.
