@@ -25,7 +25,11 @@ Motor de modelado basado en agentes (ABM) espacial en Rust — un
   rayon + stack compartido): lo que en Python era una calibración de
   ~11–34 h cabe en 1–5 min, y duplica el IoU medio del modelo
   (0.074 → 0.158) con validación de robustez — ver
-  `models/debris-flow/CALIBRATION.md`.
+  `models/debris-flow/CALIBRATION.md`. Y un **benchmark de 5
+  metaheurísticas** (`bin/benchmark`: DE/GA/PSO/SA/GWO, N corridas, tests
+  de Friedman + Wilcoxon) — el estudio comparativo que el costo de Python
+  impedía: GWO gana con respaldo estadístico
+  (`models/debris-flow/BENCHMARK_OPTIM.md`).
 
 ## Uso rápido
 

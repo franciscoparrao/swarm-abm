@@ -61,7 +61,17 @@ equivalente Python secuencial ~11-34h → ~400x. Detectó y corrigió
 sobreajuste a semilla única (T colapsa 1.81→0.02 con objetivo multi-semilla);
 IoU medio 0.074→0.158 (8 semillas). Ver models/debris-flow/CALIBRATION.md.
 
+## Benchmark de metaheurísticas (debris-flow)
+**HECHO (2026-06-15)**: 5 optimizadores (DE/GA/PSO/SA/GWO en
+`models/debris-flow/src/optim.rs`) comparados con potencia estadística —
+el estudio que el paper original no pudo (1 corrida/método, recortado por
+memoria). 5×10 corridas = 7500 sims en ~12min (Python ~80h). GWO gana:
+Friedman χ²=14.3 p=0.006, Wilcoxon-Holm GWO>DE,GA; lidera fuera de muestra.
+Tests en validation/calibration_benchmark.py (scipy). Ver BENCHMARK_OPTIM.md.
+
 ## Próximos pasos al retomar
 1. CI en GitHub Actions (test + clippy + fmt).
 2. Borrador del paper (EMS/JASSS): patas — determinismo, paridad Mesa,
-   benchmarks 45-67x, caso real debris-flow ~100x + calibración robusta ~400x.
+   benchmarks 45-67x, debris-flow ~100x, calibración robusta ~400x,
+   benchmark de metaheurísticas con stats. Posible 2o paper (geociencia):
+   "comparación de calibradores de ABM espacial habilitada por HPC".

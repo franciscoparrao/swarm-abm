@@ -55,6 +55,31 @@ sobreajuste —no solo encontrar un número alto— es la verdadera ganancia.
 
 Parámetros en `data/best_params_de.json`; embebidos como `Params::preset_de()`.
 
+## Benchmark de metaheurísticas
+
+El paper original de `debris-flow-abm` calibró con varias metaheurísticas
+(GA, PSO, SA, DE, GWO, TPE) pero **una sola corrida por método** y con
+presupuestos recortados por límites de memoria — sin poder afirmar
+estadísticamente cuál calibra mejor. El motor elimina esa barrera:
+`src/bin/benchmark.rs` corre los 5 optimizadores N veces cada uno con el
+mismo presupuesto de evaluaciones y compara las distribuciones de IoU.
+
+```bash
+cargo run --release -p debris-flow --bin benchmark -- --runs 10 --budget 150
+./validation/.venv/bin/python validation/calibration_benchmark.py  # Friedman + Wilcoxon
+```
+
+Resultado (5 métodos × 10 corridas = 7500 simulaciones en ~12 min;
+equivalente Python secuencial ~80 h): **Grey Wolf Optimizer gana** con
+respaldo estadístico (Friedman χ²=14.3, p=0.006; Wilcoxon-Holm: GWO > DE y
+GA). GWO también lidera fuera de muestra (IoU 0.112, F1 0.199 sobre 8
+semillas frescas). Tabla completa y tests en
+[`BENCHMARK_OPTIM.md`](BENCHMARK_OPTIM.md).
+
+Esto es contribución metodológica reutilizable: el optimizador `Method` y el
+espacio `PARAM_DIMS` son genéricos; el patrón "comparar calibradores con
+potencia estadística" aplica a cualquier modelo sobre swarm-core.
+
 ## Honestidad sobre el IoU absoluto
 
 El IoU sigue siendo modesto (~0.16): el modelo sobre-predice área (recall

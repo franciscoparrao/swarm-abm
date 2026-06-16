@@ -133,6 +133,124 @@ impl Params {
     }
 }
 
+/// Una dimensión calibrable: nombre, rango y setter sobre [`Params`].
+pub struct ParamDim {
+    pub name: &'static str,
+    pub lo: f64,
+    pub hi: f64,
+    pub set: fn(&mut Params, f64),
+}
+
+/// Espacio de búsqueda de la calibración: los 15 parámetros continuos del
+/// modelo con los mismos rangos que la calibración Optuna original.
+/// `n_rain_agents` y `footprint_radius` quedan fijos. Compartido por el
+/// calibrador (`bin/calibrate`) y el benchmark (`bin/benchmark`).
+pub const PARAM_DIMS: &[ParamDim] = &[
+    ParamDim {
+        name: "rain_threshold",
+        lo: 0.01,
+        hi: 0.3,
+        set: |p, v| p.rain_threshold = v,
+    },
+    ParamDim {
+        name: "sediment_threshold",
+        lo: 0.01,
+        hi: 0.3,
+        set: |p, v| p.sediment_threshold = v,
+    },
+    ParamDim {
+        name: "susceptibility_threshold",
+        lo: 0.05,
+        hi: 0.4,
+        set: |p, v| p.susceptibility_threshold = v,
+    },
+    ParamDim {
+        name: "friction_coefficient",
+        lo: 0.01,
+        hi: 0.1,
+        set: |p, v| p.friction_coefficient = v,
+    },
+    ParamDim {
+        name: "coastal_slope_threshold",
+        lo: 0.01,
+        hi: 0.15,
+        set: |p, v| p.coastal_slope_threshold = v,
+    },
+    ParamDim {
+        name: "coastal_spread_factor",
+        lo: 2.0,
+        hi: 5.0,
+        set: |p, v| p.coastal_spread_factor = v,
+    },
+    ParamDim {
+        name: "coastal_volume_threshold",
+        lo: 0.1,
+        hi: 1.5,
+        set: |p, v| p.coastal_volume_threshold = v,
+    },
+    ParamDim {
+        name: "volume_decay_flat",
+        lo: 0.95,
+        hi: 0.995,
+        set: |p, v| p.volume_decay_flat = v,
+    },
+    ParamDim {
+        name: "volume_decay_slope",
+        lo: 0.98,
+        hi: 0.998,
+        set: |p, v| p.volume_decay_slope = v,
+    },
+    ParamDim {
+        name: "stream_attraction_weight",
+        lo: 1.0,
+        hi: 10.0,
+        set: |p, v| p.stream_attraction_weight = v,
+    },
+    ParamDim {
+        name: "max_velocity",
+        lo: 10.0,
+        hi: 30.0,
+        set: |p, v| p.max_velocity = v,
+    },
+    ParamDim {
+        name: "min_velocity",
+        lo: 0.1,
+        hi: 1.0,
+        set: |p, v| p.min_velocity = v,
+    },
+    ParamDim {
+        name: "critical_slope",
+        lo: 0.01,
+        hi: 0.1,
+        set: |p, v| p.critical_slope = v,
+    },
+    ParamDim {
+        name: "slope_acceleration_factor",
+        lo: 1.0,
+        hi: 2.0,
+        set: |p, v| p.slope_acceleration_factor = v,
+    },
+    ParamDim {
+        name: "stochastic_temperature",
+        lo: 0.0,
+        hi: 2.0,
+        set: |p, v| p.stochastic_temperature = v,
+    },
+];
+
+/// Construye `Params` desde un vector de genes (resto = defaults del modelo).
+#[must_use]
+pub fn params_from_genes(x: &[f64], n_agents: usize) -> Params {
+    let mut p = Params {
+        n_rain_agents: n_agents,
+        ..Params::default()
+    };
+    for (dim, &v) in PARAM_DIMS.iter().zip(x) {
+        (dim.set)(&mut p, v);
+    }
+    p
+}
+
 /// Capas raster de entrada (todas alineadas a la misma grilla).
 #[derive(Clone)]
 pub struct Layers {

@@ -6,9 +6,12 @@
 //! bajas diferidas, entorno multi-capa raster, métricas espaciales).
 
 pub mod model;
+pub mod optim;
 pub mod raster;
 
 pub use model::{
-    DebrisAgent, DebrisFlowModel, Flow, Layers, Metrics, Params, Raindrop, evaluate, run_and_score,
+    DebrisAgent, DebrisFlowModel, Flow, Layers, Metrics, PARAM_DIMS, ParamDim, Params, Raindrop,
+    evaluate, params_from_genes, run_and_score,
 };
+pub use optim::{Bounds, Method, Outcome};
 pub use raster::{CopiapoData, Window, load};

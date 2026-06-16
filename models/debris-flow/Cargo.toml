@@ -21,3 +21,7 @@ path = "src/main.rs"
 [[bin]]
 name = "calibrate"
 path = "src/bin/calibrate.rs"
+
+[[bin]]
+name = "benchmark"
+path = "src/bin/benchmark.rs"
