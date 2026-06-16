@@ -106,7 +106,7 @@ fn main() {
             (method, run, out.best_f, out.evals)
         })
         .collect();
-    results.sort_by(|a, b| (a.0 as usize, a.1).cmp(&(b.0 as usize, b.1)));
+    results.sort_by_key(|r| (r.0 as usize, r.1));
 
     let elapsed = t0.elapsed().as_secs_f64();
     println!(
