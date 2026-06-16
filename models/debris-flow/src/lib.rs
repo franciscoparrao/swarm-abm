@@ -10,8 +10,8 @@ pub mod optim;
 pub mod raster;
 
 pub use model::{
-    DebrisAgent, DebrisFlowModel, Flow, Layers, Metrics, PARAM_DIMS, ParamDim, Params, Raindrop,
-    evaluate, params_from_genes, run_and_score,
+    DebrisAgent, DebrisFlowModel, Flow, Layers, Metrics, PARAM_DIMS, ParamDim, Params, Physics,
+    Raindrop, evaluate, evaluate_masked, params_from_genes, run_and_score,
 };
 pub use optim::{Bounds, Method, Outcome};
 pub use raster::{CopiapoData, Window, load};

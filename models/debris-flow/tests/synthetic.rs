@@ -1,6 +1,6 @@
 //! Tests del modelo de flujos de detritos sobre terreno sintético.
 
-use debris_flow::{DebrisAgent, DebrisFlowModel, Layers, Params};
+use debris_flow::{DebrisAgent, DebrisFlowModel, Layers, Params, Physics};
 use swarm_core::prelude::*;
 
 /// Plano inclinado que baja hacia +y, condiciones óptimas para generar flujo.
@@ -142,4 +142,36 @@ fn sin_lluvia_no_hay_flujos() {
     s.run(300);
     assert_eq!(s.model.flows_created, 0);
     assert!(footprint_cells(&s.model).is_empty());
+}
+
+#[test]
+fn fisica_coastal_radio_dinamico_y_descenso() {
+    // La variante Coastal (selección por menor elevación, radio de footprint
+    // dinámico, velocidad con drag) genera flujos que descienden el plano.
+    let params = Params {
+        physics: Physics::Coastal,
+        n_rain_agents: 5,
+        ..Params::default()
+    };
+    let mut s = sim(layers_plano(60, 200, 0.3), params, 1);
+    s.run(300);
+    assert!(s.model.flows_created > 0, "Coastal debe generar flujos");
+    let cells = footprint_cells(&s.model);
+    let max_y = cells.iter().map(|p| p.y).max().expect("hay celdas");
+    assert!(
+        max_y >= 150,
+        "los flujos Coastal deben descender (max_y={max_y})"
+    );
+    // Determinismo de la variante.
+    let correr = || {
+        let p = Params {
+            physics: Physics::Coastal,
+            n_rain_agents: 5,
+            ..Params::default()
+        };
+        let mut s = sim(layers_plano(60, 200, 0.3), p, 1);
+        s.run(300);
+        footprint_cells(&s.model)
+    };
+    assert_eq!(correr(), correr());
 }

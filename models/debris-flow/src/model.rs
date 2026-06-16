@@ -27,10 +27,31 @@ use swarm_core::prelude::*;
 
 use crate::raster::Window;
 
+/// Variante física del modelo. El repositorio original tiene dos:
+/// `simulate_copiapo.py` (transferibilidad a Copiapó) y
+/// `simulate_fabdem_coastal.py` (Chañaral, el mejor caso). Difieren en tres
+/// puntos: regla de selección de celda, radio del footprint y ley de
+/// velocidad.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Physics {
+    /// Selección por mejor *score* (pendiente + atracción a cauces, softmax
+    /// con temperatura), radio de footprint fijo, velocidad con
+    /// `critical_slope`/`slope_acceleration_factor`. Sin flat-fallback.
+    Copiapo,
+    /// Selección por menor *elevación* absoluta (determinista) con
+    /// flat-fallback alcanzable, radio de footprint dinámico
+    /// `√(volumen/π)·8`, velocidad con drag cuadrático. (Chañaral.)
+    Coastal,
+}
+
 /// Parámetros del modelo. `Default` = calibración Optuna-TPE con temperatura
 /// (Copiapó, `best_params_optuna_withT.json`, IoU de referencia 0.1344).
 #[derive(Debug, Clone)]
 pub struct Params {
+    /// Variante física (regla de selección, radio, velocidad).
+    pub physics: Physics,
+    /// Velocidad mínima para activar el flat-fallback (solo `Coastal`).
+    pub min_velocity_for_flat: f64,
     pub n_rain_agents: usize,
     pub rain_threshold: f64,
     pub sediment_threshold: f64,
@@ -53,6 +74,8 @@ pub struct Params {
 impl Default for Params {
     fn default() -> Self {
         Self {
+            physics: Physics::Copiapo,
+            min_velocity_for_flat: 0.3,
             n_rain_agents: 50,
             rain_threshold: 0.144_190_846_138_895_52,
             sediment_threshold: 0.245_290_867_453_274_14,
@@ -81,6 +104,8 @@ impl Params {
     #[must_use]
     pub fn preset_18iters() -> Self {
         Self {
+            physics: Physics::Copiapo,
+            min_velocity_for_flat: 0.3,
             n_rain_agents: 100,
             rain_threshold: 0.137_407_585_541_073_35,
             sediment_threshold: 0.068_498_568_677_264_9,
@@ -112,6 +137,8 @@ impl Params {
     #[must_use]
     pub fn preset_de() -> Self {
         Self {
+            physics: Physics::Copiapo,
+            min_velocity_for_flat: 0.3,
             n_rain_agents: 50,
             rain_threshold: 0.3,
             sediment_threshold: 0.092_558_033_987_087_35,
@@ -128,6 +155,38 @@ impl Params {
             critical_slope: 0.01,
             slope_acceleration_factor: 1.967_888_613_326_076,
             stochastic_temperature: 0.020_193_507_448_305_392,
+            footprint_radius: 4.0,
+        }
+    }
+
+    /// Config B (`config_b_final_params.json`, iteración #39): el **mejor caso
+    /// documentado**, calibrado en Chañaral con la física `Coastal`.
+    /// IoU de referencia 0.4653 (precision 0.673, recall 0.602) sobre el bbox
+    /// urbano. 100 agentes × 500 pasos.
+    #[must_use]
+    pub fn preset_chanaral() -> Self {
+        Self {
+            // Config B trae `radius: 4.0` y sin `stochastic_temperature`: es el
+            // modelo de radio fijo determinista (estilo Copiapó), no el coastal
+            // dinámico.
+            physics: Physics::Copiapo,
+            min_velocity_for_flat: 0.3,
+            n_rain_agents: 100,
+            rain_threshold: 0.101_606_108_481_210_84,
+            sediment_threshold: 0.094_635_181_408_432_01,
+            susceptibility_threshold: 0.198_861_568_955_504_58,
+            friction_coefficient: 0.037_457_245_035_043_26,
+            coastal_slope_threshold: 0.049_142_772_130_048_896,
+            coastal_spread_factor: 3.0,
+            coastal_volume_threshold: 0.507_932_647_213_464_8,
+            volume_decay_flat: 0.982_647_199_400_866_5,
+            volume_decay_slope: 0.992_117_700_717_812_9,
+            stream_attraction_weight: 4.885_735_349_727_721,
+            max_velocity: 21.769_307_004_602_613,
+            min_velocity: 0.455_355_360_773_441_74,
+            critical_slope: 0.044_696_974_323_989_53,
+            slope_acceleration_factor: 1.272_307_202_025_451_8,
+            stochastic_temperature: 0.0,
             footprint_radius: 4.0,
         }
     }
@@ -285,6 +344,9 @@ pub struct Flow {
     pub volume: f64,
     pub velocity: f64,
     pub has_spread: bool,
+    /// Radio del footprint de este flujo. Fijo (`footprint_radius`) en
+    /// `Copiapo`; dinámico `√(volumen_inicial/π)·8` en `Coastal`.
+    pub radius: f64,
 }
 
 #[derive(Debug)]
@@ -361,28 +423,59 @@ impl DebrisFlowModel {
         model
     }
 
-    fn mark_footprint(&mut self, pos: Pos) {
+    /// Radio del footprint de un flujo según su volumen y la física.
+    fn flow_radius(&self, volume: f64) -> f64 {
+        match self.params.physics {
+            Physics::Copiapo => self.params.footprint_radius,
+            // Disco proporcional a la raíz del volumen (área ∝ volumen).
+            Physics::Coastal => (volume / std::f64::consts::PI).sqrt() * 8.0,
+        }
+    }
+
+    /// Marca el disco de footprint de radio `radius` centrado en `pos`.
+    /// `Copiapo` usa el disco fijo precomputado (`d < r`); `Coastal` un disco
+    /// dinámico por flujo (`d² ≤ ⌊r⌋²`, como el original).
+    fn mark_footprint(&mut self, pos: Pos, radius: f64) {
         let (w, h) = (
             self.footprint.width() as i64,
             self.footprint.height() as i64,
         );
-        for &(dx, dy) in &self.disc {
+        let mut mark = |dx: i64, dy: i64| {
             let (x, y) = (pos.x as i64 + dx, pos.y as i64 + dy);
             if x >= 0 && y >= 0 && x < w && y < h {
                 self.footprint[Pos::new(x as usize, y as usize)] = true;
+            }
+        };
+        match self.params.physics {
+            Physics::Copiapo => {
+                for &(dx, dy) in &self.disc {
+                    mark(dx, dy);
+                }
+            }
+            Physics::Coastal => {
+                let rp = (radius as i64).max(1);
+                for dy in -rp..=rp {
+                    for dx in -rp..=rp {
+                        if dx * dx + dy * dy <= rp * rp {
+                            mark(dx, dy);
+                        }
+                    }
+                }
             }
         }
     }
 
     fn spawn_flow(&mut self, pos: Pos, volume: f64, velocity: f64, has_spread: bool) {
+        let radius = self.flow_radius(volume);
         self.agents.insert(DebrisAgent::Flow(Flow {
             pos,
             volume,
             velocity,
             has_spread,
+            radius,
         }));
         self.flows_created += 1;
-        self.mark_footprint(pos);
+        self.mark_footprint(pos, radius);
     }
 
     /// Flujos vivos en este momento.
@@ -494,7 +587,7 @@ impl Flow {
                 } else {
                     model.params.volume_decay_flat
                 };
-                model.mark_footprint(next);
+                model.mark_footprint(next, self.radius);
                 model.total_moves += 1;
             }
             None => {
@@ -545,6 +638,21 @@ impl Flow {
     }
 
     fn search_in_radius(
+        &self,
+        model: &DebrisFlowModel,
+        radius: i64,
+        current_elev: f64,
+        rng: &mut SimRng,
+    ) -> Option<(Pos, f64)> {
+        match model.params.physics {
+            Physics::Copiapo => self.search_score(model, radius, current_elev, rng),
+            Physics::Coastal => self.search_min_elev(model, radius, current_elev),
+        }
+    }
+
+    /// Selección `Copiapo`: mejor score (pendiente + atracción a cauces),
+    /// softmax con temperatura si `stochastic_temperature > 0`.
+    fn search_score(
         &self,
         model: &DebrisFlowModel,
         radius: i64,
@@ -623,14 +731,102 @@ impl Flow {
         }
     }
 
-    fn update_velocity(&self, slope: f64, p: &Params) -> f64 {
-        let v = if slope > p.critical_slope {
-            self.velocity
-                + GRAVITY * slope * (1.0 - p.friction_coefficient) * p.slope_acceleration_factor
-        } else {
-            self.velocity * 0.95
+    /// Selección `Coastal`: vecino de menor elevación absoluta (determinista);
+    /// si ninguno desciende y la velocidad supera `min_velocity_for_flat`,
+    /// flat-fallback al vecino casi-plano de menor diferencia de cota.
+    fn search_min_elev(
+        &self,
+        model: &DebrisFlowModel,
+        radius: i64,
+        current_elev: f64,
+    ) -> Option<(Pos, f64)> {
+        let (w, h) = (
+            model.layers.dem.width() as i64,
+            model.layers.dem.height() as i64,
+        );
+        let elev_at = |dx: i64, dy: i64| -> Option<(Pos, f64, f64)> {
+            let (nx, ny) = (self.pos.x as i64 + dx, self.pos.y as i64 + dy);
+            if nx < 0 || ny < 0 || nx >= w || ny >= h {
+                return None;
+            }
+            let npos = Pos::new(nx as usize, ny as usize);
+            let elev = f64::from(model.layers.dem[npos]);
+            if elev.is_nan() {
+                return None;
+            }
+            let dist_m = ((dx * dx + dy * dy) as f64).sqrt() * model.pixel_size;
+            Some((npos, elev, (current_elev - elev) / dist_m))
         };
-        v.clamp(p.min_velocity, p.max_velocity)
+
+        // Vecino de menor elevación con pendiente descendente.
+        let mut best_elev = current_elev;
+        let mut best: Option<(Pos, f64)> = None;
+        for dx in -radius..=radius {
+            for dy in -radius..=radius {
+                if dx == 0 && dy == 0 {
+                    continue;
+                }
+                if let Some((npos, elev, slope)) = elev_at(dx, dy)
+                    && slope > 0.0
+                    && elev < best_elev
+                {
+                    best_elev = elev;
+                    best = Some((npos, slope));
+                }
+            }
+        }
+        if best.is_some() {
+            return best;
+        }
+
+        // Flat-fallback: solo con suficiente inercia.
+        if self.velocity > model.params.min_velocity_for_flat {
+            let mut best_diff = f64::INFINITY;
+            let mut bestf: Option<(Pos, f64)> = None;
+            for dx in -radius..=radius {
+                for dy in -radius..=radius {
+                    if dx == 0 && dy == 0 {
+                        continue;
+                    }
+                    if let Some((npos, elev, slope)) = elev_at(dx, dy)
+                        && slope >= -0.05
+                    {
+                        let diff = (elev - current_elev).abs();
+                        if diff < best_diff {
+                            best_diff = diff;
+                            bestf = Some((npos, slope));
+                        }
+                    }
+                }
+            }
+            return bestf;
+        }
+        None
+    }
+
+    fn update_velocity(&self, slope: f64, p: &Params) -> f64 {
+        match p.physics {
+            Physics::Copiapo => {
+                let v = if slope > p.critical_slope {
+                    self.velocity
+                        + GRAVITY
+                            * slope
+                            * (1.0 - p.friction_coefficient)
+                            * p.slope_acceleration_factor
+                } else {
+                    self.velocity * 0.95
+                };
+                v.clamp(p.min_velocity, p.max_velocity)
+            }
+            Physics::Coastal => {
+                if slope <= 0.0 {
+                    return self.velocity * 0.95;
+                }
+                // Aceleración gravitatoria menos drag cuadrático (dt = 1).
+                let accel = GRAVITY * slope - p.friction_coefficient * self.velocity.powi(2);
+                (self.velocity + accel).clamp(0.01, 600.0)
+            }
+        }
     }
 }
 
@@ -667,6 +863,40 @@ pub struct Metrics {
     pub area_gt_km2: f64,
 }
 
+/// Como [`evaluate`] pero contando solo las celdas dentro de `bbox` (> 0) —
+/// el dominio de evaluación urbano de Chañaral, donde el ground truth y el
+/// bounding box son rásters separados (`AFFECTED = area & bbox` en el
+/// original).
+pub fn evaluate_masked(
+    footprint: &Grid2D<bool>,
+    ground_truth: &Grid2D<f32>,
+    bbox: &Grid2D<f32>,
+    window: Window,
+    pixel_size: f64,
+) -> Metrics {
+    let (mut tp, mut fp, mut fneg, mut gt_total) = (0u64, 0u64, 0u64, 0u64);
+    for y in window.row_start..window.row_end {
+        for x in window.col_start..window.col_end {
+            let pos = Pos::new(x, y);
+            if bbox[pos] <= 0.0 {
+                continue;
+            }
+            let pred = footprint[pos];
+            let truth = ground_truth[pos] > 0.0;
+            match (pred, truth) {
+                (true, true) => tp += 1,
+                (true, false) => fp += 1,
+                (false, true) => fneg += 1,
+                (false, false) => {}
+            }
+            if truth {
+                gt_total += 1;
+            }
+        }
+    }
+    metrics_from_counts(tp, fp, fneg, gt_total, pixel_size)
+}
+
 pub fn evaluate(
     footprint: &Grid2D<bool>,
     ground_truth: &Grid2D<f32>,
@@ -690,6 +920,11 @@ pub fn evaluate(
             }
         }
     }
+    metrics_from_counts(tp, fp, fneg, gt_total, pixel_size)
+}
+
+/// Construye [`Metrics`] (IoU, precision, recall, F1, áreas) desde los conteos.
+fn metrics_from_counts(tp: u64, fp: u64, fneg: u64, gt_total: u64, pixel_size: f64) -> Metrics {
     let union = tp + fp + fneg;
     let iou = if union > 0 {
         tp as f64 / union as f64

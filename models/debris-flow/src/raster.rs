@@ -17,10 +17,14 @@ pub struct Window {
     pub col_end: usize,
 }
 
-/// Stack completo de Copiapó: capas de entrada + ground truth + ventana.
+/// Stack completo: capas de entrada + ground truth + ventana, y un bounding
+/// box de evaluación opcional (presente en Chañaral, ausente en Copiapó).
 pub struct CopiapoData {
     pub layers: Layers,
     pub ground_truth: Grid2D<f32>,
+    /// Máscara del dominio de evaluación (Chañaral); `None` ⇒ se evalúa toda
+    /// la ventana (Copiapó).
+    pub bbox: Option<Grid2D<f32>>,
     pub window: Window,
     pub pixel_size: f64,
 }
@@ -63,6 +67,12 @@ pub fn load(dir: &Path) -> io::Result<CopiapoData> {
     };
 
     let g = |name: &str| load_f32(&dir.join(format!("{name}.f32")), width, height);
+    let bbox_path = dir.join("bbox.f32");
+    let bbox = if bbox_path.exists() {
+        Some(load_f32(&bbox_path, width, height)?)
+    } else {
+        None
+    };
     Ok(CopiapoData {
         layers: Layers {
             dem: g("dem")?,
@@ -74,6 +84,7 @@ pub fn load(dir: &Path) -> io::Result<CopiapoData> {
             streams: g("streams")?,
         },
         ground_truth: g("ground_truth")?,
+        bbox,
         window,
         pixel_size,
     })

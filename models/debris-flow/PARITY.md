@@ -1,5 +1,35 @@
 # Paridad: port Rust (swarm-core) vs debris-flow-abm original (Mesa/Python)
 
+## El mejor caso: Chañaral (Config B) — paridad <1%
+
+El caso de referencia más fuerte del repositorio original es Chañaral, donde
+el modelo se **calibró** (Config B, `config_b_final_params.json`): IoU 0.4653.
+El port lo reproduce sobre el mismo stack (DEM FABDEM con océano enmascarado,
+ground truth + bbox urbano rasterizados, evaluación sobre el bbox):
+
+| Métrica | Python (Config B) | Rust port (moda, 8 semillas) |
+|---|---|---|
+| IoU | 0.4653 | **0.4684** |
+| precision | 0.673 | 0.690 |
+| recall | 0.602 | 0.593 |
+| F1 | 0.635 | 0.638 |
+| n flujos | 384 | 384 |
+| afectado∩bbox (px) | 1973 | 1973 |
+
+Diferencia en IoU **< 1 %**, dentro del ruido de la colocación aleatoria de
+agentes (numpy global sin semilla en el original vs `SimRng` sembrado en el
+port). El conteo de flujos y el dominio de evaluación coinciden exactamente.
+Reproducir: `cargo run --release -p debris-flow -- --preset chanaral --steps 500 --seeds 8`
+(tras `python3 models/debris-flow/prepare_chanaral.py`).
+
+> Detalle de modelado: Config B trae `radius: 4.0` y no calibra
+> `stochastic_temperature` → es la física de **radio fijo determinista**
+> (`Physics::Copiapo`), no la variante coastal de radio dinámico (también
+> portada, `Physics::Coastal`). Confundir las dos sobre-predice el área ~4×.
+> Y en una cuenca costera, usar el DEM **sin** enmascarar el océano derrama
+> los flujos por la zona urbana: ambos detalles fueron necesarios para la
+> paridad.
+
 ## Protocolo
 
 El modelo original (`simulate_copiapo.py`, V4 HYBRID v2) se ejecutó **sin

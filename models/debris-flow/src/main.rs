@@ -7,7 +7,7 @@
 use std::path::PathBuf;
 use std::time::Instant;
 
-use debris_flow::{DebrisFlowModel, Params, evaluate, load};
+use debris_flow::{DebrisFlowModel, Params, evaluate, evaluate_masked, load};
 use swarm_core::prelude::*;
 
 fn arg_value<T: std::str::FromStr>(args: &[String], name: &str) -> Option<T> {
@@ -25,10 +25,18 @@ fn main() {
     let n_seeds: u64 = arg_value(&args, "--seeds").unwrap_or(1);
     let steps: u64 = arg_value(&args, "--steps").unwrap_or(300);
 
-    let mut params = match arg_value::<String>(&args, "--preset").as_deref() {
+    let preset = arg_value::<String>(&args, "--preset");
+    let mut params = match preset.as_deref() {
         Some("18iters") => Params::preset_18iters(),
         Some("de") => Params::preset_de(),
+        Some("chanaral") => Params::preset_chanaral(),
         _ => Params::default(),
+    };
+    // El stack por defecto de Chañaral vive en otro directorio.
+    let data_dir = if preset.as_deref() == Some("chanaral") && !args.iter().any(|a| a == "--data") {
+        PathBuf::from("models/debris-flow/data/chanaral")
+    } else {
+        data_dir
     };
     if let Some(n) = arg_value::<usize>(&args, "--agents") {
         params.n_rain_agents = n;
@@ -37,7 +45,7 @@ fn main() {
         params.stochastic_temperature = t;
     }
 
-    println!("→ Cargando stack Copiapó desde {}...", data_dir.display());
+    println!("→ Cargando stack desde {}...", data_dir.display());
     let t0 = Instant::now();
     let data = load(&data_dir).unwrap_or_else(|e| {
         eprintln!("Error cargando datos: {e}\n(corre primero prepare_data.py)");
@@ -70,12 +78,22 @@ fn main() {
         let pasos = sim.run(steps);
         let elapsed = t0.elapsed().as_secs_f64();
 
-        let m = evaluate(
-            &sim.model.footprint,
-            &data.ground_truth,
-            data.window,
-            data.pixel_size,
-        );
+        // Con bbox (Chañaral) la evaluación se restringe al dominio urbano.
+        let m = match &data.bbox {
+            Some(bbox) => evaluate_masked(
+                &sim.model.footprint,
+                &data.ground_truth,
+                bbox,
+                data.window,
+                data.pixel_size,
+            ),
+            None => evaluate(
+                &sim.model.footprint,
+                &data.ground_truth,
+                data.window,
+                data.pixel_size,
+            ),
+        };
         ious.push(m.iou);
         println!(
             "seed {seed}: IoU {:.4} | precision {:.3} | recall {:.3} | F1 {:.3} | \
@@ -100,7 +118,15 @@ fn main() {
         let mean = ious.iter().sum::<f64>() / ious.len() as f64;
         let sd =
             (ious.iter().map(|x| (x - mean).powi(2)).sum::<f64>() / (ious.len() - 1) as f64).sqrt();
-        println!("\nIoU: media {mean:.4} ± {sd:.4} (n={})", ious.len());
-        println!("Referencia Python (Optuna withT, 1 corrida): IoU 0.1344");
+        let max = ious.iter().cloned().fold(f64::MIN, f64::max);
+        println!(
+            "\nIoU: media {mean:.4} ± {sd:.4} | máx {max:.4} (n={})",
+            ious.len()
+        );
+        let referencia = match preset.as_deref() {
+            Some("chanaral") => "Referencia Python (Config B, mejor caso): IoU 0.4653",
+            _ => "Referencia Python (Optuna withT, 1 corrida): IoU 0.1344",
+        };
+        println!("{referencia}");
     }
 }
