@@ -114,6 +114,17 @@ fn main() {
             sim.model.deaths_volume,
             sim.model.deaths_stuck
         );
+        // Volcado del footprint (u8 fila-mayor) para diagnóstico espacial.
+        if let Some(path) = arg_value::<String>(&args, "--dump") {
+            let bytes: Vec<u8> = sim
+                .model
+                .footprint
+                .iter()
+                .map(|(_, &v)| u8::from(v))
+                .collect();
+            std::fs::write(&path, &bytes).expect("escribir footprint");
+            println!("         footprint volcado en {path}");
+        }
     }
 
     if ious.len() > 1 {

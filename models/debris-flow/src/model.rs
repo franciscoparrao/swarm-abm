@@ -94,6 +94,12 @@ pub struct EnhancedPhysics {
     pub voellmy_mu: f64,
     /// Coeficiente turbulento (Voellmy), m/s².
     pub voellmy_xi: f64,
+    /// Expansión en abanico: pendiente bajo la cual el flujo desconfina y
+    /// deposita esparcido (planicie / abanico aluvial). 0 ⇒ desactivado.
+    pub fan_slope_threshold: f64,
+    /// Multiplicador del radio de deposición en la zona de abanico
+    /// (1 ⇒ sin expansión).
+    pub fan_factor: f64,
 }
 
 impl Default for Params {
@@ -220,19 +226,34 @@ impl Params {
         }
     }
 
-    /// Chañaral con física enriquecida: parte de Config B y añade entrainment,
-    /// Voellmy e inercia con valores de partida (la calibración los ajusta).
+    /// Chañaral con física enriquecida, **calibrado** por DE
+    /// (`bin/calibrate_chanaral`, objetivo media−sd, 16 parámetros;
+    /// `data/best_params_chanaral_enhanced.json`). IoU 0.508 ± 0.065 fuera de
+    /// muestra (vs 0.468 del baseline). La calibración apagó el entrainment
+    /// (`max_bulking = 1`) y la inercia (`0`): la mejora viene de la
+    /// **expansión en abanico** (`fan_factor = 6`), que captura la deposición
+    /// en la planicie urbana baja — el error dominante según el diagnóstico.
     #[must_use]
     pub fn preset_chanaral_enhanced() -> Self {
         Self {
+            rain_threshold: 0.145_499_066_088_289_2,
+            sediment_threshold: 0.106_730_911_819_057_78,
+            susceptibility_threshold: 0.170_185_843_038_595_63,
+            stream_attraction_weight: 3.878_164_259_746_095_7,
+            volume_decay_flat: 0.990_396_103_073_088_6,
+            footprint_radius: 4.345_674_658_766_687,
+            coastal_volume_threshold: 0.974_790_232_692_809_5,
+            coastal_slope_threshold: 0.15,
             enhanced: Some(EnhancedPhysics {
-                entrainment_coef: 0.02,
-                erosion_slope_threshold: 0.1,
-                max_bulking: 5.0,
+                entrainment_coef: 0.168_233_193_901_953_13,
+                erosion_slope_threshold: 0.156_525_730_356_535_53,
+                max_bulking: 1.0,
                 inertia_weight: 0.0,
                 use_voellmy: true,
-                voellmy_mu: 0.1,
-                voellmy_xi: 1000.0,
+                voellmy_mu: 0.047_638_748_581_462_68,
+                voellmy_xi: 4000.0,
+                fan_slope_threshold: 0.003_469_778_439_930_934,
+                fan_factor: 6.0,
             }),
             ..Self::preset_chanaral()
         }
@@ -447,6 +468,18 @@ pub const PARAM_DIMS_CHANARAL: &[ParamDim] = &[
         hi: 4000.0,
         set: |p, v| p.enhanced.as_mut().unwrap().voellmy_xi = v,
     },
+    ParamDim {
+        name: "fan_slope_threshold",
+        lo: 0.0,
+        hi: 0.08,
+        set: |p, v| p.enhanced.as_mut().unwrap().fan_slope_threshold = v,
+    },
+    ParamDim {
+        name: "fan_factor",
+        lo: 1.0,
+        hi: 6.0,
+        set: |p, v| p.enhanced.as_mut().unwrap().fan_factor = v,
+    },
 ];
 
 /// Construye `Params` del modelo enriquecido de Chañaral desde genes.
@@ -599,19 +632,19 @@ impl DebrisFlowModel {
                 self.footprint[Pos::new(x as usize, y as usize)] = true;
             }
         };
-        match self.params.physics {
-            Physics::Copiapo => {
-                for &(dx, dy) in &self.disc {
-                    mark(dx, dy);
-                }
+        // Disco fijo precomputado solo en el modelo base `Copiapo`; con física
+        // enriquecida (o `Coastal`) el radio es dinámico —necesario para la
+        // expansión en abanico, que agranda el radio en la planicie.
+        if self.params.physics == Physics::Copiapo && self.params.enhanced.is_none() {
+            for &(dx, dy) in &self.disc {
+                mark(dx, dy);
             }
-            Physics::Coastal => {
-                let rp = (radius as i64).max(1);
-                for dy in -rp..=rp {
-                    for dx in -rp..=rp {
-                        if dx * dx + dy * dy <= rp * rp {
-                            mark(dx, dy);
-                        }
+        } else {
+            let rp = (radius as i64).max(1);
+            for dy in -rp..=rp {
+                for dx in -rp..=rp {
+                    if dx * dx + dy * dy <= rp * rp {
+                        mark(dx, dy);
                     }
                 }
             }
@@ -747,7 +780,16 @@ impl Flow {
                 self.pos = next;
                 self.velocity = self.update_velocity(slope, &model.params);
                 self.update_volume(slope, model);
-                model.mark_footprint(next, self.radius);
+                // Expansión en abanico: al desconfinar en la planicie de baja
+                // pendiente, el radio de deposición crece (esparcido lateral).
+                let next_slope = f64::from(model.layers.slope[next]);
+                let mark_radius = match &model.params.enhanced {
+                    Some(e) if e.fan_factor > 1.0 && next_slope < e.fan_slope_threshold => {
+                        self.radius * e.fan_factor
+                    }
+                    _ => self.radius,
+                };
+                model.mark_footprint(next, mark_radius);
                 model.total_moves += 1;
             }
             None => {

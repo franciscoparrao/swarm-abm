@@ -69,14 +69,18 @@ memoria). 5×10 corridas = 7500 sims en ~12min (Python ~80h). GWO gana:
 Friedman χ²=14.3 p=0.006, Wilcoxon-Holm GWO>DE,GA; lidera fuera de muestra.
 Tests en validation/calibration_benchmark.py (scipy). Ver BENCHMARK_OPTIM.md.
 
-## Experimento de física enriquecida (2026-06-16)
-Chañaral con entrainment + Voellmy + inercia (EnhancedPhysics, calibrado por
-DE en bin/calibrate_chanaral). Veredicto HONESTO: no mejora robustamente vs
-base. Base 0.4684±0.0004 (precision 0.690) vs enriquecido 0.4597±0.0275
-(precision 0.715, pico 0.4757). Empate con trade-offs. Lección: 3-seed
-sobreajustó (oos 0.31); objetivo media−sd con 5 semillas lo arregló.
-Resultado publicable: "more physics ≠ better" + el motor lo estableció con
-rigor en una tarde. Ver models/debris-flow/PHYSICS_EXPERIMENT.md.
+## Mejora del modelo dirigida por diagnóstico (2026-06-17) — SUPERA EL MEJOR CASO
+Ciclo completo modelo-datos en Chañaral:
+1. Física GENÉRICA (entrainment+Voellmy+inercia) NO mejoró: 0.4597±0.0275 vs base 0.4684.
+2. DIAGNÓSTICO del error (--dump footprint + análisis espacial): 77% de los FN
+   en zona baja (<10m, planicie urbana costera) donde el flujo desconfinó en
+   abanico — mecanismo faltante. Sedimento=0 en bbox (por eso entrainment no servía).
+3. Física DIRIGIDA (expansión en abanico, fan_factor): IoU base 0.468 -> 0.508±0.065
+   (máx 0.531), recall 0.59->0.79, FN zona baja -74% (620->161). Validado OOS.
+La calibración APAGÓ las mejoras genéricas (max_bulking=1, inertia=0) y subió el
+abanico al tope (fan_factor=6): el optimizador eligió justo lo que el diagnóstico
+predijo. Lección: física a ciegas NO, física dirigida por diagnóstico SÍ.
+preset_chanaral_enhanced calibrado. Ver models/debris-flow/PHYSICS_EXPERIMENT.md.
 
 ## Próximos pasos al retomar
 1. CI en GitHub Actions (test + clippy + fmt).
