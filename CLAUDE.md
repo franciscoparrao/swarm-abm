@@ -35,6 +35,11 @@ Speedup ~67× sobre Mesa. Ver `validation/REPORT.md` y `validation/run_validatio
 **Environmental Modelling & Software** o **JASSS** (social simulation).
 
 ## Conexiones con tu ecosistema
+- **SurtGIS**: ✅ COMPONE con swarm-abm (2026-06-17). SurtGIS deriva el raster de
+  disponibilidad de sedimento (TWI vía `hydrology all`) que alimenta el modelo
+  de detritos; subió el IoU de Chañaral 0.543→0.555 y la precision a 0.825.
+  Script `models/debris-flow/make_sediment_twi.sh`. Demuestra el ecosistema de
+  motores Rust colaborando (un motor genera el entorno espacial del otro).
 - **debris-flow-abm**: ✅ REESCRITO sobre el motor (2026-06-11, `models/debris-flow/`):
   port fiel del V4 HYBRID v2, paridad distribucional verificada corriendo el
   Python original sobre insumos idénticos (IoU/área/flujos/trayectorias

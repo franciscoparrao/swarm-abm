@@ -47,7 +47,13 @@ def main():
     ap.add_argument(
         "--out", type=pathlib.Path, default=pathlib.Path(__file__).parent / "data/chanaral"
     )
+    ap.add_argument(
+        "--sediment", type=pathlib.Path, default=None,
+        help="override del raster de sedimento (p.ej. el TWI de SurtGIS)",
+    )
     args = ap.parse_args()
+    if args.sediment is not None:
+        RASTERS["sediment"] = str(args.sediment)
     args.out.mkdir(parents=True, exist_ok=True)
 
     ref = gdal.Open(str(args.rasters / RASTERS["dem"]))

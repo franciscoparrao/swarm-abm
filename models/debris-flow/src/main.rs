@@ -33,12 +33,16 @@ fn main() {
         Some("chanaral-enhanced") => Params::preset_chanaral_enhanced(),
         _ => Params::default(),
     };
-    // El stack por defecto de Chañaral vive en otro directorio.
-    let is_chanaral = matches!(preset.as_deref(), Some("chanaral" | "chanaral-enhanced"));
-    let data_dir = if is_chanaral && !args.iter().any(|a| a == "--data") {
-        PathBuf::from("models/debris-flow/data/chanaral")
-    } else {
+    // Stacks por defecto de Chañaral: el enriquecido usa el sedimento de
+    // SurtGIS (TWI), el baseline el original.
+    let data_dir = if args.iter().any(|a| a == "--data") {
         data_dir
+    } else {
+        match preset.as_deref() {
+            Some("chanaral-enhanced") => PathBuf::from("models/debris-flow/data/chanaral_twi"),
+            Some("chanaral") => PathBuf::from("models/debris-flow/data/chanaral"),
+            _ => data_dir,
+        }
     };
     if let Some(n) = arg_value::<usize>(&args, "--agents") {
         params.n_rain_agents = n;

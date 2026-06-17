@@ -86,12 +86,35 @@ calibración *conjunta*; el inicio ponderado aislado no movía la precision
 (la susceptibilidad de los FP no difería de la de los aciertos), pero
 reoptimizando todo el balance sí.
 
+## Intento 4 — mejor dato de sedimento (vía SurtGIS)
+
+El diagnóstico había marcado que el raster de sedimento era **NaN en el 99 %
+del bbox urbano** — un vacío de datos justo en el abanico aluvial, donde más
+sedimento hay físicamente. Eso impedía actuar al entrainment. La solución es
+de datos, no de modelo: se derivó un raster de disponibilidad de sedimento
+con **SurtGIS** (el motor ráster del ecosistema) a partir del TWI
+(`hydrology all` → TWI normalizado; ver `make_sediment_twi.sh`), que cubre
+todo el dominio. Recalibrando sobre ese stack:
+
+| Sedimento | IoU medio | sd | precision | F1 |
+|---|---|---|---|---|
+| Original (NaN en el bbox) | 0.5429 | 0.083 | 0.745 | 0.700 |
+| **TWI (SurtGIS)** | **0.5553** | **0.021** | **0.825** | **0.714** |
+
+El dato real subió el IoU a **0.555**, la precision a **0.825** y **redujo la
+varianza 4×**. La calibración **reactivó el entrainment** (`max_bulking` 1 → 4.9)
+y bajó el `seeding_power` (3.5 → 0.38): con sedimento sensato en el bbox, el
+mecanismo físico correcto trabaja y compensa el truco del inicio. Un motor del
+ecosistema (SurtGIS) alimenta al otro (swarm-abm) — justo la composición que
+el proyecto anticipaba.
+
 ## Conclusión
 
 - **Física a ciegas: no.** Mejoras **dirigidas por el diagnóstico iterativo
-  del error: sí** — dos rondas (abanico para los FN de la planicie, inicio
-  ponderado para los FP de laderas) llevaron el IoU de 0.468 a **0.543**
-  (+16 %), validado fuera de muestra.
+  del error: sí** — tres rondas (abanico para los FN de la planicie, inicio
+  ponderado para los FP de laderas, y mejor dato de sedimento vía SurtGIS)
+  llevaron el IoU de 0.468 a **0.555** (+19 %), con precision 0.69 → 0.83 y la
+  mitad de varianza, todo validado fuera de muestra.
 - El método que funcionó: *diagnosticar el error espacial → hipotetizar el
   mecanismo faltante → implementarlo → recalibrar globalmente → validar →
   repetir.* Cada vuelta son miles de simulaciones.

@@ -235,37 +235,40 @@ impl Params {
         }
     }
 
-    /// Chañaral con física enriquecida, **calibrado** por DE
-    /// (`bin/calibrate_chanaral`, objetivo media−sd, 17 parámetros;
-    /// `data/best_params_chanaral_enhanced.json`). IoU **0.543 ± 0.083** fuera
-    /// de muestra (precision 0.745, recall 0.669, F1 0.700) vs 0.468 del
-    /// baseline — **+16 %** sobre el mejor caso histórico. Combina dos mejoras
-    /// dirigidas por el diagnóstico del error: la **expansión en abanico**
-    /// (captura los falsos negativos de la planicie urbana) y el **inicio
-    /// ponderado por susceptibilidad** (`seeding_power = 3.5`), que recupera la
-    /// precision concentrando los flujos en las zonas inestables.
+    /// Chañaral con física enriquecida, calibrado sobre el stack con
+    /// **sedimento derivado por SurtGIS** (TWI; ver `make_sediment_twi.sh`).
+    /// IoU **0.555 ± 0.021** fuera de muestra (precision **0.825**, recall
+    /// 0.636, F1 0.714) vs 0.468 del baseline — **+19 %** sobre el mejor caso
+    /// histórico, con la mitad de varianza que el sedimento original. Tres
+    /// mejoras dirigidas por el diagnóstico iterativo del error: expansión en
+    /// abanico (FN de la planicie), inicio ponderado por susceptibilidad (FP
+    /// de laderas) y, sobre todo, un raster de sedimento que **cubre el bbox**
+    /// (el original era NaN ahí) — lo que reactiva el entrainment
+    /// (`max_bulking = 4.9`) y deja bajar el `seeding_power` a 0.38.
+    ///
+    /// Requiere el stack `data/chanaral_twi` (`make_sediment_twi.sh`).
     #[must_use]
     pub fn preset_chanaral_enhanced() -> Self {
         Self {
-            rain_threshold: 0.196_970_325_955_673_3,
-            sediment_threshold: 0.147_801_495_370_392_03,
-            susceptibility_threshold: 0.175_755_024_654_978_41,
-            stream_attraction_weight: 4.536_514_280_928_059,
-            volume_decay_flat: 0.949_366_166_127_164_8,
-            footprint_radius: 3.310_278_644_161_179,
-            coastal_volume_threshold: 0.227_267_600_791_588_03,
-            coastal_slope_threshold: 0.052_761_538_154_907_18,
-            seeding_power: 3.534_082_979_697_019_2,
+            rain_threshold: 0.01,
+            sediment_threshold: 0.3,
+            susceptibility_threshold: 0.4,
+            stream_attraction_weight: 2.298_352_670_435_594_5,
+            volume_decay_flat: 0.986_661_753_383_864_9,
+            footprint_radius: 2.441_222_119_825_453_3,
+            coastal_volume_threshold: 0.106_327_614_505_500_66,
+            coastal_slope_threshold: 0.026_340_470_362_909_78,
+            seeding_power: 0.376_231_768_153_495_24,
             enhanced: Some(EnhancedPhysics {
-                entrainment_coef: 0.123_318_919_555_470_06,
-                erosion_slope_threshold: 0.129_092_426_712_826_45,
-                max_bulking: 3.980_133_155_065_993_3,
-                inertia_weight: 1.755_878_640_972_358,
+                entrainment_coef: 0.105_111_743_082_086_8,
+                erosion_slope_threshold: 0.206_150_474_749_992_04,
+                max_bulking: 4.877_580_100_604_257,
+                inertia_weight: 0.0,
                 use_voellmy: true,
                 voellmy_mu: 0.02,
-                voellmy_xi: 2899.5234547305,
-                fan_slope_threshold: 0.002_748_885_337_396_284,
-                fan_factor: 5.486_580_964_957_672,
+                voellmy_xi: 1741.0179581877894,
+                fan_slope_threshold: 0.003_761_432_560_273_698_4,
+                fan_factor: 6.0,
             }),
             ..Self::preset_chanaral()
         }
