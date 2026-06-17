@@ -1,2 +1,5 @@
 /.venv
 /data
+/outputs
+!/data/scaling.csv
+!/data/bench_summary.csv
