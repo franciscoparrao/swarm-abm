@@ -108,6 +108,22 @@ mecanismo físico correcto trabaja y compensa el truco del inicio. Un motor del
 ecosistema (SurtGIS) alimenta al otro (swarm-abm) — justo la composición que
 el proyecto anticipaba.
 
+## Métrica threshold-independent: AUC / ROC
+
+El IoU y el F1 dependen del umbral binario. El mapa de probabilidad de
+ensemble (frecuencia de visita sobre 50 corridas) da un score continuo que
+permite evaluar la **capacidad discriminativa** sin fijar umbral, vía ROC:
+
+- **AUC = 0.855** sobre el bbox urbano (12.4 % de positivos) — "excelente" en
+  la escala de hazard/susceptibility, competitivo con la literatura.
+- La curva sube casi vertical hasta **TPR 0.74 con FPR 0.05** (punto de
+  Youden, umbral 0.06): el núcleo afectado se identifica con muy pocos falsos
+  positivos; la periferia difusa es lo que cuesta.
+
+Esto contextualiza el IoU: aunque 0.555 parezca modesto (métrica dura con
+desbalance y umbral fijo), el AUC 0.855 revela que la discriminación
+subyacente es alta. Figura: `outputs/roc_chanaral.png` (`plot_roc.R`).
+
 ## Conclusión
 
 - **Física a ciegas: no.** Mejoras **dirigidas por el diagnóstico iterativo
