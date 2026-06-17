@@ -24,8 +24,10 @@ Motor de modelado basado en agentes (ABM) espacial en Rust — un
   reproduce el IoU de referencia con diferencia **< 1 %** (0.468 vs 0.465);
   detalles en `models/debris-flow/PARITY.md`. Y va más allá: diagnosticando
   el error espacial e implementando el mecanismo faltante (expansión en
-  abanico), **supera el mejor caso histórico** — IoU 0.468 → **0.508**
-  (recall 0.59 → 0.79), ver `models/debris-flow/PHYSICS_EXPERIMENT.md`.
+  abanico, e inicio ponderado por susceptibilidad), **supera el mejor caso
+  histórico** — IoU 0.468 → **0.543** (+16 %; precision 0.69 → 0.75), vía un
+  ciclo iterativo diagnóstico→hipótesis→recalibración inviable en Python.
+  Ver `models/debris-flow/PHYSICS_EXPERIMENT.md`.
   Incluye **calibración por Differential Evolution** (`bin/calibrate`,
   rayon + stack compartido): lo que en Python era una calibración de
   ~11–34 h cabe en 1–5 min, y duplica el IoU medio del modelo

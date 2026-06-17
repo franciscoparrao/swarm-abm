@@ -46,6 +46,9 @@ fn main() {
     if let Some(t) = arg_value::<f64>(&args, "--temperature") {
         params.stochastic_temperature = t;
     }
+    if let Some(sp) = arg_value::<f64>(&args, "--seeding") {
+        params.seeding_power = sp;
+    }
 
     println!("→ Cargando stack desde {}...", data_dir.display());
     let t0 = Instant::now();

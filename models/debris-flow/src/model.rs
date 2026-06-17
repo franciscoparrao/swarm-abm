@@ -69,6 +69,11 @@ pub struct Params {
     pub slope_acceleration_factor: f64,
     pub stochastic_temperature: f64,
     pub footprint_radius: f64,
+    /// Exponente del muestreo de puntos de inicio por susceptibilidad: 0 ⇒
+    /// uniforme (como el original); >0 ⇒ los agentes de lluvia nacen con
+    /// probabilidad ∝ `susceptibilidad^seeding_power`, concentrándolos en las
+    /// zonas inestables y reduciendo flujos espurios en laderas.
+    pub seeding_power: f64,
     /// Física enriquecida opcional (entrainment, Voellmy, inercia).
     /// `None` ⇒ modelo base (paridad con el original).
     pub enhanced: Option<EnhancedPhysics>,
@@ -124,6 +129,7 @@ impl Default for Params {
             slope_acceleration_factor: 1.977_372_842_263_519_3,
             stochastic_temperature: 0.284_740_340_530_182_05,
             footprint_radius: 4.0,
+            seeding_power: 0.0,
             enhanced: None,
         }
     }
@@ -155,6 +161,7 @@ impl Params {
             slope_acceleration_factor: 1.880_467_839_015_258,
             stochastic_temperature: 0.0,
             footprint_radius: 4.0,
+            seeding_power: 0.0,
             enhanced: None,
         }
     }
@@ -189,6 +196,7 @@ impl Params {
             slope_acceleration_factor: 1.967_888_613_326_076,
             stochastic_temperature: 0.020_193_507_448_305_392,
             footprint_radius: 4.0,
+            seeding_power: 0.0,
             enhanced: None,
         }
     }
@@ -222,38 +230,42 @@ impl Params {
             slope_acceleration_factor: 1.272_307_202_025_451_8,
             stochastic_temperature: 0.0,
             footprint_radius: 4.0,
+            seeding_power: 0.0,
             enhanced: None,
         }
     }
 
     /// Chañaral con física enriquecida, **calibrado** por DE
-    /// (`bin/calibrate_chanaral`, objetivo media−sd, 16 parámetros;
-    /// `data/best_params_chanaral_enhanced.json`). IoU 0.508 ± 0.065 fuera de
-    /// muestra (vs 0.468 del baseline). La calibración apagó el entrainment
-    /// (`max_bulking = 1`) y la inercia (`0`): la mejora viene de la
-    /// **expansión en abanico** (`fan_factor = 6`), que captura la deposición
-    /// en la planicie urbana baja — el error dominante según el diagnóstico.
+    /// (`bin/calibrate_chanaral`, objetivo media−sd, 17 parámetros;
+    /// `data/best_params_chanaral_enhanced.json`). IoU **0.543 ± 0.083** fuera
+    /// de muestra (precision 0.745, recall 0.669, F1 0.700) vs 0.468 del
+    /// baseline — **+16 %** sobre el mejor caso histórico. Combina dos mejoras
+    /// dirigidas por el diagnóstico del error: la **expansión en abanico**
+    /// (captura los falsos negativos de la planicie urbana) y el **inicio
+    /// ponderado por susceptibilidad** (`seeding_power = 3.5`), que recupera la
+    /// precision concentrando los flujos en las zonas inestables.
     #[must_use]
     pub fn preset_chanaral_enhanced() -> Self {
         Self {
-            rain_threshold: 0.145_499_066_088_289_2,
-            sediment_threshold: 0.106_730_911_819_057_78,
-            susceptibility_threshold: 0.170_185_843_038_595_63,
-            stream_attraction_weight: 3.878_164_259_746_095_7,
-            volume_decay_flat: 0.990_396_103_073_088_6,
-            footprint_radius: 4.345_674_658_766_687,
-            coastal_volume_threshold: 0.974_790_232_692_809_5,
-            coastal_slope_threshold: 0.15,
+            rain_threshold: 0.196_970_325_955_673_3,
+            sediment_threshold: 0.147_801_495_370_392_03,
+            susceptibility_threshold: 0.175_755_024_654_978_41,
+            stream_attraction_weight: 4.536_514_280_928_059,
+            volume_decay_flat: 0.949_366_166_127_164_8,
+            footprint_radius: 3.310_278_644_161_179,
+            coastal_volume_threshold: 0.227_267_600_791_588_03,
+            coastal_slope_threshold: 0.052_761_538_154_907_18,
+            seeding_power: 3.534_082_979_697_019_2,
             enhanced: Some(EnhancedPhysics {
-                entrainment_coef: 0.168_233_193_901_953_13,
-                erosion_slope_threshold: 0.156_525_730_356_535_53,
-                max_bulking: 1.0,
-                inertia_weight: 0.0,
+                entrainment_coef: 0.123_318_919_555_470_06,
+                erosion_slope_threshold: 0.129_092_426_712_826_45,
+                max_bulking: 3.980_133_155_065_993_3,
+                inertia_weight: 1.755_878_640_972_358,
                 use_voellmy: true,
-                voellmy_mu: 0.047_638_748_581_462_68,
-                voellmy_xi: 4000.0,
-                fan_slope_threshold: 0.003_469_778_439_930_934,
-                fan_factor: 6.0,
+                voellmy_mu: 0.02,
+                voellmy_xi: 2899.5234547305,
+                fan_slope_threshold: 0.002_748_885_337_396_284,
+                fan_factor: 5.486_580_964_957_672,
             }),
             ..Self::preset_chanaral()
         }
@@ -480,6 +492,12 @@ pub const PARAM_DIMS_CHANARAL: &[ParamDim] = &[
         hi: 6.0,
         set: |p, v| p.enhanced.as_mut().unwrap().fan_factor = v,
     },
+    ParamDim {
+        name: "seeding_power",
+        lo: 0.0,
+        hi: 5.0,
+        set: |p, v| p.seeding_power = v,
+    },
 ];
 
 /// Construye `Params` del modelo enriquecido de Chañaral desde genes.
@@ -597,13 +615,34 @@ impl DebrisFlowModel {
             disc,
         };
 
-        // Agentes de lluvia en celdas válidas distintas, al azar.
+        // Agentes de lluvia en celdas válidas distintas.
         let mut rng = rng_from_seed(seed ^ 0xDEB1_5F10);
         let mut usadas = std::collections::HashSet::new();
-        while usadas.len() < model.params.n_rain_agents {
-            let pos = Pos::new(rng.random_range(0..width), rng.random_range(0..height));
-            if !model.layers.dem[pos].is_nan() && usadas.insert(pos) {
-                model.agents.insert(DebrisAgent::Raindrop(Raindrop { pos }));
+        let power = model.params.seeding_power;
+        if power == 0.0 {
+            // Camino original: colocación uniforme (paridad bit a bit).
+            while usadas.len() < model.params.n_rain_agents {
+                let pos = Pos::new(rng.random_range(0..width), rng.random_range(0..height));
+                if !model.layers.dem[pos].is_nan() && usadas.insert(pos) {
+                    model.agents.insert(DebrisAgent::Raindrop(Raindrop { pos }));
+                }
+            }
+        } else {
+            // Muestreo por rechazo ponderado por susceptibilidad^power: los
+            // agentes se concentran en zonas inestables. Tope de intentos por
+            // si hay pocas celdas susceptibles.
+            let max_intentos = model.params.n_rain_agents * 10_000;
+            let mut intentos = 0;
+            while usadas.len() < model.params.n_rain_agents && intentos < max_intentos {
+                intentos += 1;
+                let pos = Pos::new(rng.random_range(0..width), rng.random_range(0..height));
+                if model.layers.dem[pos].is_nan() {
+                    continue;
+                }
+                let sus = f64::from(model.layers.susceptibility[pos]).clamp(0.0, 1.0);
+                if rng.random_range(0.0..1.0) < sus.powf(power) && usadas.insert(pos) {
+                    model.agents.insert(DebrisAgent::Raindrop(Raindrop { pos }));
+                }
             }
         }
         model

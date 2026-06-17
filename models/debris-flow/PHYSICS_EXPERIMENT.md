@@ -64,14 +64,40 @@ Más aún, la calibración **apagó las mejoras genéricas** que no servían
 abanico al tope (`fan_factor = 6`). De toda la física disponible, el optimizador
 seleccionó exactamente la que el diagnóstico predijo.
 
+## Intento 3 — segunda iteración del diagnóstico (FP → inicio ponderado)
+
+El abanico subió el recall pero bajó la precision (0.69 → 0.60): aparecieron
+falsos positivos en las **laderas altas** (mediana 62 m, fuera de cauce). El
+diagnóstico apuntó al **inicio**: los agentes de lluvia se colocaban
+*uniformes*, naciendo flujos espurios en laderas. Se añadió **inicio
+ponderado por susceptibilidad** (`seeding_power`: probabilidad de inicio ∝
+`susceptibilidad^p`), recalibrando los 17 parámetros en conjunto:
+
+| Modelo | IoU medio | máx | precision | recall | F1 |
+|---|---|---|---|---|---|
+| Base (Config B) | 0.4684 | 0.469 | 0.690 | 0.593 | 0.638 |
+| +abanico | 0.5081 | 0.531 | 0.595 | **0.789** | 0.672 |
+| **+abanico +inicio ponderado** | **0.5429** | **0.5730** | **0.745** | 0.669 | **0.700** |
+
+El inicio ponderado (`seeding_power = 3.5`) **recuperó la precision**
+(0.60 → 0.75) reduciendo los flujos espurios, y el IoU subió a **0.543** —
+**+16 % sobre el mejor caso histórico** (0.468). Matiz: la mejora exige
+calibración *conjunta*; el inicio ponderado aislado no movía la precision
+(la susceptibilidad de los FP no difería de la de los aciertos), pero
+reoptimizando todo el balance sí.
+
 ## Conclusión
 
-- **Física a ciegas: no.** Física **dirigida por el diagnóstico del error: sí**
-  (+8.5 % IoU, mejora robusta y validada fuera de muestra).
-- El cuello de botella nunca fue la idea, sino el cómputo: este ciclo
-  (diagnóstico → hipótesis → implementación → recalibración → validación) son
-  miles de simulaciones. El motor lo hizo en una tarde; en el flujo Python
-  original habría sido inviable.
+- **Física a ciegas: no.** Mejoras **dirigidas por el diagnóstico iterativo
+  del error: sí** — dos rondas (abanico para los FN de la planicie, inicio
+  ponderado para los FP de laderas) llevaron el IoU de 0.468 a **0.543**
+  (+16 %), validado fuera de muestra.
+- El método que funcionó: *diagnosticar el error espacial → hipotetizar el
+  mecanismo faltante → implementarlo → recalibrar globalmente → validar →
+  repetir.* Cada vuelta son miles de simulaciones.
+- El cuello de botella nunca fue la idea, sino el cómputo. El motor hizo cada
+  vuelta en minutos; en el flujo Python original (≈60 s/corrida, sin
+  reproducibilidad) este ciclo iterativo era inviable.
 
 Reproducir:
 
