@@ -69,6 +69,31 @@ pub struct Params {
     pub slope_acceleration_factor: f64,
     pub stochastic_temperature: f64,
     pub footprint_radius: f64,
+    /// Física enriquecida opcional (entrainment, Voellmy, inercia).
+    /// `None` ⇒ modelo base (paridad con el original).
+    pub enhanced: Option<EnhancedPhysics>,
+}
+
+/// Términos físicos adicionales, calibrables. Cada uno se reduce al modelo
+/// base cuando su coeficiente es 0, salvo Voellmy que se activa con su flag.
+#[derive(Debug, Clone, Copy)]
+pub struct EnhancedPhysics {
+    /// Tasa de arrastre de sedimento (bulking): en pendiente erosiva el
+    /// volumen crece `×(1 + entrainment_coef · sedimento_local)` por paso.
+    pub entrainment_coef: f64,
+    /// Pendiente sobre la cual el flujo erosiona (arrastra) en vez de depositar.
+    pub erosion_slope_threshold: f64,
+    /// Tope de crecimiento del volumen por bulking (múltiplo del inicial).
+    pub max_bulking: f64,
+    /// Peso de la inercia: premia alinear el paso con la dirección acumulada.
+    pub inertia_weight: f64,
+    /// Reología de Voellmy: si `true`, la velocidad usa fricción de Coulomb
+    /// (`mu`) + término turbulento (`v²/xi`) en vez de `gravedad − drag`.
+    pub use_voellmy: bool,
+    /// Coeficiente de fricción de Coulomb (Voellmy).
+    pub voellmy_mu: f64,
+    /// Coeficiente turbulento (Voellmy), m/s².
+    pub voellmy_xi: f64,
 }
 
 impl Default for Params {
@@ -93,6 +118,7 @@ impl Default for Params {
             slope_acceleration_factor: 1.977_372_842_263_519_3,
             stochastic_temperature: 0.284_740_340_530_182_05,
             footprint_radius: 4.0,
+            enhanced: None,
         }
     }
 }
@@ -123,6 +149,7 @@ impl Params {
             slope_acceleration_factor: 1.880_467_839_015_258,
             stochastic_temperature: 0.0,
             footprint_radius: 4.0,
+            enhanced: None,
         }
     }
 }
@@ -156,6 +183,7 @@ impl Params {
             slope_acceleration_factor: 1.967_888_613_326_076,
             stochastic_temperature: 0.020_193_507_448_305_392,
             footprint_radius: 4.0,
+            enhanced: None,
         }
     }
 
@@ -188,6 +216,25 @@ impl Params {
             slope_acceleration_factor: 1.272_307_202_025_451_8,
             stochastic_temperature: 0.0,
             footprint_radius: 4.0,
+            enhanced: None,
+        }
+    }
+
+    /// Chañaral con física enriquecida: parte de Config B y añade entrainment,
+    /// Voellmy e inercia con valores de partida (la calibración los ajusta).
+    #[must_use]
+    pub fn preset_chanaral_enhanced() -> Self {
+        Self {
+            enhanced: Some(EnhancedPhysics {
+                entrainment_coef: 0.02,
+                erosion_slope_threshold: 0.1,
+                max_bulking: 5.0,
+                inertia_weight: 0.0,
+                use_voellmy: true,
+                voellmy_mu: 0.1,
+                voellmy_xi: 1000.0,
+            }),
+            ..Self::preset_chanaral()
         }
     }
 }
@@ -310,6 +357,108 @@ pub fn params_from_genes(x: &[f64], n_agents: usize) -> Params {
     p
 }
 
+/// Espacio de calibración del modelo **enriquecido** de Chañaral: parámetros
+/// base relevantes + los 6 términos físicos (entrainment, Voellmy, inercia).
+/// Los setters de la sección enriquecida asumen `enhanced = Some(..)`
+/// (garantizado por [`Params::preset_chanaral_enhanced`]).
+pub const PARAM_DIMS_CHANARAL: &[ParamDim] = &[
+    ParamDim {
+        name: "rain_threshold",
+        lo: 0.01,
+        hi: 0.3,
+        set: |p, v| p.rain_threshold = v,
+    },
+    ParamDim {
+        name: "sediment_threshold",
+        lo: 0.01,
+        hi: 0.3,
+        set: |p, v| p.sediment_threshold = v,
+    },
+    ParamDim {
+        name: "susceptibility_threshold",
+        lo: 0.05,
+        hi: 0.4,
+        set: |p, v| p.susceptibility_threshold = v,
+    },
+    ParamDim {
+        name: "stream_attraction_weight",
+        lo: 1.0,
+        hi: 10.0,
+        set: |p, v| p.stream_attraction_weight = v,
+    },
+    ParamDim {
+        name: "volume_decay_flat",
+        lo: 0.90,
+        hi: 0.999,
+        set: |p, v| p.volume_decay_flat = v,
+    },
+    ParamDim {
+        name: "footprint_radius",
+        lo: 2.0,
+        hi: 6.0,
+        set: |p, v| p.footprint_radius = v,
+    },
+    ParamDim {
+        name: "coastal_volume_threshold",
+        lo: 0.1,
+        hi: 1.5,
+        set: |p, v| p.coastal_volume_threshold = v,
+    },
+    ParamDim {
+        name: "coastal_slope_threshold",
+        lo: 0.01,
+        hi: 0.15,
+        set: |p, v| p.coastal_slope_threshold = v,
+    },
+    // --- física enriquecida ---
+    ParamDim {
+        name: "entrainment_coef",
+        lo: 0.0,
+        hi: 0.2,
+        set: |p, v| p.enhanced.as_mut().unwrap().entrainment_coef = v,
+    },
+    ParamDim {
+        name: "erosion_slope_threshold",
+        lo: 0.02,
+        hi: 0.3,
+        set: |p, v| p.enhanced.as_mut().unwrap().erosion_slope_threshold = v,
+    },
+    ParamDim {
+        name: "max_bulking",
+        lo: 1.0,
+        hi: 10.0,
+        set: |p, v| p.enhanced.as_mut().unwrap().max_bulking = v,
+    },
+    ParamDim {
+        name: "inertia_weight",
+        lo: 0.0,
+        hi: 3.0,
+        set: |p, v| p.enhanced.as_mut().unwrap().inertia_weight = v,
+    },
+    ParamDim {
+        name: "voellmy_mu",
+        lo: 0.02,
+        hi: 0.4,
+        set: |p, v| p.enhanced.as_mut().unwrap().voellmy_mu = v,
+    },
+    ParamDim {
+        name: "voellmy_xi",
+        lo: 200.0,
+        hi: 4000.0,
+        set: |p, v| p.enhanced.as_mut().unwrap().voellmy_xi = v,
+    },
+];
+
+/// Construye `Params` del modelo enriquecido de Chañaral desde genes.
+#[must_use]
+pub fn params_chanaral_from_genes(x: &[f64]) -> Params {
+    let mut p = Params::preset_chanaral_enhanced();
+    for (dim, &v) in PARAM_DIMS_CHANARAL.iter().zip(x) {
+        (dim.set)(&mut p, v);
+    }
+    p
+}
+
 /// Capas raster de entrada (todas alineadas a la misma grilla).
 #[derive(Clone)]
 pub struct Layers {
@@ -347,6 +496,10 @@ pub struct Flow {
     /// Radio del footprint de este flujo. Fijo (`footprint_radius`) en
     /// `Copiapo`; dinámico `√(volumen_inicial/π)·8` en `Coastal`.
     pub radius: f64,
+    /// Volumen inicial (referencia para el tope de bulking).
+    pub initial_volume: f64,
+    /// Dirección normalizada del último desplazamiento (para la inercia).
+    pub dir: (f64, f64),
 }
 
 #[derive(Debug)]
@@ -473,6 +626,8 @@ impl DebrisFlowModel {
             velocity,
             has_spread,
             radius,
+            initial_volume: volume,
+            dir: (0.0, 0.0),
         }));
         self.flows_created += 1;
         self.mark_footprint(pos, radius);
@@ -580,13 +735,18 @@ impl Flow {
 
         match self.find_next_position(model, rng) {
             Some((next, slope)) => {
+                // Dirección del desplazamiento (para la inercia del próximo paso).
+                let (dx, dy) = (
+                    next.x as f64 - self.pos.x as f64,
+                    next.y as f64 - self.pos.y as f64,
+                );
+                let norm = (dx * dx + dy * dy).sqrt();
+                if norm > 0.0 {
+                    self.dir = (dx / norm, dy / norm);
+                }
                 self.pos = next;
                 self.velocity = self.update_velocity(slope, &model.params);
-                self.volume *= if slope > 0.01 {
-                    model.params.volume_decay_slope
-                } else {
-                    model.params.volume_decay_flat
-                };
+                self.update_volume(slope, model);
                 model.mark_footprint(next, self.radius);
                 model.total_moves += 1;
             }
@@ -596,6 +756,27 @@ impl Flow {
                     model.dead.push(id);
                     model.deaths_stuck += 1;
                 }
+            }
+        }
+    }
+
+    /// Evolución del volumen. Base: decae según pendiente. Con física
+    /// enriquecida: **entrainment** (en pendiente erosiva el volumen crece
+    /// arrastrando sedimento, con tope) o **deposición** (decae en zona plana).
+    fn update_volume(&mut self, slope: f64, model: &DebrisFlowModel) {
+        let p = &model.params;
+        match &p.enhanced {
+            Some(e) if slope > e.erosion_slope_threshold => {
+                let sed = f64::from(model.layers.sediment[self.pos]).max(0.0);
+                let grown = self.volume * (1.0 + e.entrainment_coef * sed);
+                self.volume = grown.min(self.initial_volume * e.max_bulking);
+            }
+            _ => {
+                self.volume *= if slope > 0.01 {
+                    p.volume_decay_slope
+                } else {
+                    p.volume_decay_flat
+                };
             }
         }
     }
@@ -688,6 +869,17 @@ impl Flow {
                     let mut score = slope;
                     if model.layers.streams[npos] > 0.0 {
                         score += p.stream_attraction_weight * slope;
+                    }
+                    // Inercia (física enriquecida): premia seguir la dirección
+                    // acumulada (producto punto con el versor del candidato).
+                    if let Some(e) = &p.enhanced
+                        && e.inertia_weight > 0.0
+                    {
+                        let dist = ((dx * dx + dy * dy) as f64).sqrt();
+                        if dist > 0.0 {
+                            let align = (dx as f64 * self.dir.0 + dy as f64 * self.dir.1) / dist;
+                            score += e.inertia_weight * align.max(0.0) * slope;
+                        }
                     }
                     candidates.push((npos, slope, score));
                 }
@@ -805,6 +997,18 @@ impl Flow {
     }
 
     fn update_velocity(&self, slope: f64, p: &Params) -> f64 {
+        // Reología de Voellmy (física enriquecida): fricción de Coulomb +
+        // término turbulento. a = g·(slope − μ) − g·v²/ξ.
+        if let Some(e) = &p.enhanced
+            && e.use_voellmy
+        {
+            if slope <= 0.0 {
+                return self.velocity * 0.95;
+            }
+            let accel =
+                GRAVITY * (slope - e.voellmy_mu) - GRAVITY * self.velocity.powi(2) / e.voellmy_xi;
+            return (self.velocity + accel).clamp(0.01, 600.0);
+        }
         match p.physics {
             Physics::Copiapo => {
                 let v = if slope > p.critical_slope {

@@ -30,10 +30,12 @@ fn main() {
         Some("18iters") => Params::preset_18iters(),
         Some("de") => Params::preset_de(),
         Some("chanaral") => Params::preset_chanaral(),
+        Some("chanaral-enhanced") => Params::preset_chanaral_enhanced(),
         _ => Params::default(),
     };
     // El stack por defecto de Chañaral vive en otro directorio.
-    let data_dir = if preset.as_deref() == Some("chanaral") && !args.iter().any(|a| a == "--data") {
+    let is_chanaral = matches!(preset.as_deref(), Some("chanaral" | "chanaral-enhanced"));
+    let data_dir = if is_chanaral && !args.iter().any(|a| a == "--data") {
         PathBuf::from("models/debris-flow/data/chanaral")
     } else {
         data_dir
@@ -124,7 +126,9 @@ fn main() {
             ious.len()
         );
         let referencia = match preset.as_deref() {
-            Some("chanaral") => "Referencia Python (Config B, mejor caso): IoU 0.4653",
+            Some("chanaral" | "chanaral-enhanced") => {
+                "Referencia Python (Config B, mejor caso): IoU 0.4653"
+            }
             _ => "Referencia Python (Optuna withT, 1 corrida): IoU 0.1344",
         };
         println!("{referencia}");

@@ -69,6 +69,15 @@ memoria). 5×10 corridas = 7500 sims en ~12min (Python ~80h). GWO gana:
 Friedman χ²=14.3 p=0.006, Wilcoxon-Holm GWO>DE,GA; lidera fuera de muestra.
 Tests en validation/calibration_benchmark.py (scipy). Ver BENCHMARK_OPTIM.md.
 
+## Experimento de física enriquecida (2026-06-16)
+Chañaral con entrainment + Voellmy + inercia (EnhancedPhysics, calibrado por
+DE en bin/calibrate_chanaral). Veredicto HONESTO: no mejora robustamente vs
+base. Base 0.4684±0.0004 (precision 0.690) vs enriquecido 0.4597±0.0275
+(precision 0.715, pico 0.4757). Empate con trade-offs. Lección: 3-seed
+sobreajustó (oos 0.31); objetivo media−sd con 5 semillas lo arregló.
+Resultado publicable: "more physics ≠ better" + el motor lo estableció con
+rigor en una tarde. Ver models/debris-flow/PHYSICS_EXPERIMENT.md.
+
 ## Próximos pasos al retomar
 1. CI en GitHub Actions (test + clippy + fmt).
 2. Borrador del paper (EMS/JASSS): patas — determinismo, paridad Mesa,

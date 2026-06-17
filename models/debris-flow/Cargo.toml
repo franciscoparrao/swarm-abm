@@ -25,3 +25,7 @@ path = "src/bin/calibrate.rs"
 [[bin]]
 name = "benchmark"
 path = "src/bin/benchmark.rs"
+
+[[bin]]
+name = "calibrate_chanaral"
+path = "src/bin/calibrate_chanaral.rs"
