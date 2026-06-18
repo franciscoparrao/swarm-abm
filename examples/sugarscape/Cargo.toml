@@ -1,0 +1,10 @@
+[package]
+name = "sugarscape"
+description = "Sugarscape (Epstein & Axtell, 1996): desigualdad emergente sobre Grid2D"
+publish = false
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+swarm-core = { workspace = true }

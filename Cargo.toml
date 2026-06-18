@@ -7,6 +7,7 @@ members = [
     "examples/network-sir",
     "examples/schelling",
     "examples/sir",
+    "examples/sugarscape",
     "models/debris-flow",
 ]
 

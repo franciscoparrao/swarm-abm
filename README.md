@@ -28,6 +28,12 @@ Motor de modelado basado en agentes (ABM) espacial en Rust — un
 - `examples/boids` — flocking de Reynolds en el **espacio continuo**: de
   reglas locales (separación/alineación/cohesión) emerge una bandada
   (orden de Vicsek 0.02 → 0.96).
+- `examples/sugarscape` — **Sugarscape** (Epstein & Axtell, 1996), el modelo
+  canónico de la economía basada en agentes: agentes que se mueven, cosechan
+  y **mueren** sobre un paisaje de dos picos de azúcar. De una población casi
+  homogénea emerge una distribución de riqueza desigual (Gini 0.24 → 0.42) y
+  la población se autorregula a la capacidad de carga. Ejercita movimiento +
+  muerte de agentes (baja diferida en `after_step`) + paisaje con estado.
 - `models/debris-flow` — **modelo cliente real**: flujos de detritos del
   evento Atacama 2015 (Copiapó, DEM 5871×5422 @ 30 m), port fiel de
   [debris-flow-abm](https://github.com/franciscoparrao/debris-flow-abm)
