@@ -23,7 +23,10 @@ agentes en tiempo real + WASM para correr en navegador.
 - [x] (v0.3) Batch runs + barrido de parámetros: `swarm_core::batch`
   (`run_ensemble`, `run_sweep`), paralelo con rayon tras feature `parallel`
   (secuencial sin ella, para WASM). Generaliza el patrón ad-hoc de la calibración.
-- [ ] (v0.3) Grafos/redes como espacio; bindings PyO3; visor WASM.
+- [x] (v0.3) Grafos/redes como espacio: `swarm_core::graph::Graph<T>`
+  (análogo de `Grid2D`) con generadores Erdős–Rényi, Watts–Strogatz (small-world)
+  y Barabási–Albert (scale-free) deterministas. Ejemplo `network-sir`.
+- [ ] (v0.3) Bindings PyO3; visor WASM.
 
 ## Arquitectura tentativa
 - `swarm-core`: motor; modelos como crates de ejemplo.

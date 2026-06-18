@@ -74,6 +74,7 @@
 pub mod agent;
 pub mod batch;
 pub mod data;
+pub mod graph;
 pub mod grid;
 pub mod model;
 pub mod rng;
@@ -85,6 +86,7 @@ pub mod prelude {
     pub use crate::agent::{Agent, AgentId, AgentSet};
     pub use crate::batch::{SweepCell, run_ensemble, run_sweep};
     pub use crate::data::DataCollector;
+    pub use crate::graph::{Graph, NodeId};
     pub use crate::grid::{Grid2D, Neighborhood, Pos};
     pub use crate::model::Model;
     pub use crate::rng::{SimRng, rng_from_seed};

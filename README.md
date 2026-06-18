@@ -9,14 +9,19 @@ Motor de modelado basado en agentes (ABM) espacial en Rust — un
 - `crates/swarm-core` — el motor: traits `Agent`/`Model`, scheduler
   (orden fijo, aleatorio o **simultáneo en dos fases**), `Grid2D` con
   vecindades Moore/Von Neumann y torus opcional, `DataCollector` de
-  series por paso, RNG sembrable (ChaCha8, portable entre plataformas), y
+  series por paso, RNG sembrable (ChaCha8, portable entre plataformas),
   **batch runner** (`batch::run_ensemble` / `run_sweep`) para réplicas y
-  barridos de parámetros en paralelo (rayon, feature `parallel`).
+  barridos de parámetros en paralelo (rayon, feature `parallel`), y
+  **espacio de red** (`graph::Graph<T>`, análogo de `Grid2D`) con
+  generadores Erdős–Rényi, Watts–Strogatz y Barabási–Albert.
 - `examples/schelling` — segregación de Schelling (1971).
 - `examples/sir` — SIR espacial (contagio en grilla).
 - `examples/difusion` — feromona depositada por caminantes que difunde
   (`Grid2D::diffuse`, semántica NetLogo) y se evapora; converge al punto
   fijo analítico.
+- `examples/network-sir` — contagio SIR **sobre una red** (no una grilla):
+  compara la dinámica epidémica sobre topologías aleatoria, mundo-pequeño y
+  libre de escala. Demuestra que el mismo `Agent`/`Model` corre sobre grafo.
 - `models/debris-flow` — **modelo cliente real**: flujos de detritos del
   evento Atacama 2015 (Copiapó, DEM 5871×5422 @ 30 m), port fiel de
   [debris-flow-abm](https://github.com/franciscoparrao/debris-flow-abm)

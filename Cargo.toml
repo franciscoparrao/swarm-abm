@@ -3,6 +3,7 @@ resolver = "3"
 members = [
     "crates/swarm-core",
     "examples/difusion",
+    "examples/network-sir",
     "examples/schelling",
     "examples/sir",
     "models/debris-flow",
