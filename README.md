@@ -116,12 +116,23 @@ política: el `step` por defecto los encadena. Validado con el Juego de
 la Vida (`tests/simultaneous.rs`): el blinker oscila bajo simultánea y
 se rompe bajo secuencial.
 
-## Roadmap (v0.3)
+## Roadmap
 
-- Grafos/redes como espacio; batch runs y barrido de parámetros (Rayon).
-- Benchmark formal vs Mesa/NetLogo (criterion).
-- Bindings PyO3 y visor WASM.
-- Reescritura de `debris-flow-abm` sobre el motor.
+**v0.3 (actual) — completado:**
+
+- [x] Tres espacios: grilla, grafo (Erdős–Rényi/Watts–Strogatz/Barabási–Albert)
+  y continuo (radio + spatial hashing), bajo el mismo `Agent`/`Model`.
+- [x] Batch runs y barrido de parámetros (Rayon, feature `parallel`).
+- [x] Activación simultánea en dos fases con garantía del compilador.
+- [x] Benchmark formal vs Mesa (criterion + protocolo de paridad).
+- [x] Reescritura de `debris-flow-abm` sobre el motor (modelo cliente real).
+
+**v0.4 (siguiente):**
+
+- [ ] Bindings PyO3 (API Python sobre el motor nativo).
+- [ ] Visor WASM (correr modelos en el navegador).
+
+Ver el historial completo en [`CHANGELOG.md`](CHANGELOG.md).
 
 ## Licencia
 

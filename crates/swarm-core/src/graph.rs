@@ -6,7 +6,7 @@
 //! [`neighbors`](Graph::neighbors) da sus adyacentes. Cada nodo guarda un dato
 //! `T` (p. ej. el agente que lo habita). Incluye generadores de las
 //! topologías canónicas, todos deterministas dada la semilla del
-//! [`SimRng`](crate::rng::SimRng).
+//! [`SimRng`].
 
 use std::ops::{Index, IndexMut};
 
