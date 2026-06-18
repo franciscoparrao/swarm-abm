@@ -19,7 +19,9 @@ use pyo3::prelude::*;
 
 use swarm_core::batch::run_sweep;
 use swarm_core::prelude::*;
+use swarm_models::schelling::{self, Schelling as SchellingModel, SchellingConfig};
 use swarm_models::sir::{self, Sir as SirModel, SirConfig, Status};
+use swarm_models::sugarscape::{self, Sugarscape as SugarscapeModel, SugarscapeConfig};
 
 /// Modelo SIR espacial sobre una grilla toroidal (ver `swarm_models::sir`).
 ///
@@ -153,11 +155,209 @@ fn sir_sweep(
     })
 }
 
+/// Modelo de segregación de Schelling (ver `swarm_models::schelling`).
+#[pyclass(name = "Schelling", unsendable)]
+struct PySchelling {
+    sim: Simulation<SchellingModel>,
+}
+
+#[pymethods]
+impl PySchelling {
+    /// Crea el modelo sobre una grilla `size × size` toroidal.
+    #[new]
+    #[pyo3(signature = (size = 50, density = 0.85, tolerance = 0.375, seed = 0))]
+    fn new(size: usize, density: f64, tolerance: f64, seed: u64) -> Self {
+        let cfg = SchellingConfig {
+            width: size,
+            height: size,
+            density,
+            tolerance,
+        };
+        let mut sim = Simulation::new(schelling::build(cfg, seed), seed);
+        sim.add_reporter("conforme", SchellingModel::fraction_happy);
+        sim.add_reporter("similitud", SchellingModel::mean_similarity);
+        Self { sim }
+    }
+
+    /// Avanza hasta `steps` pasos (o hasta que todos estén conformes).
+    fn run(&mut self, steps: u64) -> u64 {
+        self.sim.run(steps)
+    }
+
+    /// Serie temporal de una métrica (`"conforme"` o `"similitud"`).
+    fn series(&self, name: &str) -> Option<Vec<f64>> {
+        self.sim.data().series(name).map(<[f64]>::to_vec)
+    }
+
+    /// Fracción de agentes conformes ahora.
+    #[getter]
+    fn fraction_happy(&self) -> f64 {
+        self.sim.model.fraction_happy()
+    }
+
+    /// Índice de segregación (similitud media de vecindario) ahora.
+    #[getter]
+    fn mean_similarity(&self) -> f64 {
+        self.sim.model.mean_similarity()
+    }
+
+    /// `True` si todos los agentes están conformes (sistema estable).
+    #[getter]
+    fn finished(&self) -> bool {
+        self.sim.model.finished()
+    }
+}
+
+/// Modelo Sugarscape (ver `swarm_models::sugarscape`).
+#[pyclass(name = "Sugarscape", unsendable)]
+struct PySugarscape {
+    sim: Simulation<SugarscapeModel>,
+}
+
+#[pymethods]
+impl PySugarscape {
+    /// Crea el modelo sobre una grilla `size × size` con `n_agents` agentes.
+    #[new]
+    #[pyo3(signature = (size = 50, n_agents = 400, growback = 1, seed = 0))]
+    fn new(size: usize, n_agents: usize, growback: u32, seed: u64) -> Self {
+        let cfg = SugarscapeConfig {
+            width: size,
+            height: size,
+            n_agents,
+            growback,
+        };
+        let mut sim = Simulation::new(sugarscape::build(cfg, seed), seed)
+            .with_schedule(Schedule::new(Activation::Random));
+        sim.add_reporter("poblacion", |m: &SugarscapeModel| m.population() as f64);
+        sim.add_reporter("gini", SugarscapeModel::gini);
+        sim.add_reporter("riqueza_media", SugarscapeModel::mean_wealth);
+        Self { sim }
+    }
+
+    /// Avanza hasta `steps` pasos (o hasta que la población se extinga).
+    fn run(&mut self, steps: u64) -> u64 {
+        self.sim.run(steps)
+    }
+
+    /// Serie temporal de una métrica (`"poblacion"`, `"gini"`, `"riqueza_media"`).
+    fn series(&self, name: &str) -> Option<Vec<f64>> {
+        self.sim.data().series(name).map(<[f64]>::to_vec)
+    }
+
+    /// Riqueza de cada agente vivo (para histogramas de la distribución).
+    fn wealths(&self) -> Vec<u32> {
+        self.sim.model.wealths()
+    }
+
+    /// Población viva ahora.
+    #[getter]
+    fn population(&self) -> usize {
+        self.sim.model.population()
+    }
+
+    /// Coeficiente de Gini de la riqueza ahora.
+    #[getter]
+    fn gini(&self) -> f64 {
+        self.sim.model.gini()
+    }
+
+    /// Riqueza media ahora.
+    #[getter]
+    fn mean_wealth(&self) -> f64 {
+        self.sim.model.mean_wealth()
+    }
+}
+
+/// Barrido de la tolerancia de Schelling, en paralelo y a velocidad Rust.
+///
+/// Corre `tolerances × seeds` hasta `max_steps` pasos y devuelve una fila
+/// `(tolerance, seed, similitud_final, conforme_final)` por réplica.
+#[pyfunction]
+#[pyo3(signature = (tolerances, seeds, size = 50, density = 0.85, max_steps = 200))]
+fn schelling_sweep(
+    py: Python<'_>,
+    tolerances: Vec<f64>,
+    seeds: Vec<u64>,
+    size: usize,
+    density: f64,
+    max_steps: u64,
+) -> Vec<(f64, u64, f64, f64)> {
+    py.allow_threads(|| {
+        let cells = run_sweep(
+            &tolerances,
+            &seeds,
+            max_steps,
+            |&tolerance, seed| {
+                let cfg = SchellingConfig {
+                    width: size,
+                    height: size,
+                    density,
+                    tolerance,
+                };
+                Simulation::new(schelling::build(cfg, seed), seed)
+            },
+            |&tolerance, sim| {
+                (
+                    tolerance,
+                    sim.model.mean_similarity(),
+                    sim.model.fraction_happy(),
+                )
+            },
+        );
+        cells
+            .into_iter()
+            .map(|c| (c.value.0, c.seed, c.value.1, c.value.2))
+            .collect()
+    })
+}
+
+/// Barrido del crecimiento (growback) de Sugarscape, en paralelo.
+///
+/// Corre `growbacks × seeds` hasta `max_steps` pasos y devuelve una fila
+/// `(growback, seed, gini_final, poblacion_final)` por réplica.
+#[pyfunction]
+#[pyo3(signature = (growbacks, seeds, size = 50, n_agents = 400, max_steps = 200))]
+fn sugarscape_sweep(
+    py: Python<'_>,
+    growbacks: Vec<u32>,
+    seeds: Vec<u64>,
+    size: usize,
+    n_agents: usize,
+    max_steps: u64,
+) -> Vec<(u32, u64, f64, f64)> {
+    py.allow_threads(|| {
+        let cells = run_sweep(
+            &growbacks,
+            &seeds,
+            max_steps,
+            |&growback, seed| {
+                let cfg = SugarscapeConfig {
+                    width: size,
+                    height: size,
+                    n_agents,
+                    growback,
+                };
+                Simulation::new(sugarscape::build(cfg, seed), seed)
+                    .with_schedule(Schedule::new(Activation::Random))
+            },
+            |&growback, sim| (growback, sim.model.gini(), sim.model.population() as f64),
+        );
+        cells
+            .into_iter()
+            .map(|c| (c.value.0, c.seed, c.value.1, c.value.2))
+            .collect()
+    })
+}
+
 /// Módulo de extensión `swarm_abm`.
 #[pymodule]
 fn swarm_abm(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<PySir>()?;
+    m.add_class::<PySchelling>()?;
+    m.add_class::<PySugarscape>()?;
     m.add_function(wrap_pyfunction!(sir_sweep, m)?)?;
+    m.add_function(wrap_pyfunction!(schelling_sweep, m)?)?;
+    m.add_function(wrap_pyfunction!(sugarscape_sweep, m)?)?;
     m.add("__version__", env!("CARGO_PKG_VERSION"))?;
     Ok(())
 }

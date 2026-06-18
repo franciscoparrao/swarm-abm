@@ -11,4 +11,6 @@
 
 #![warn(missing_docs)]
 
+pub mod schelling;
 pub mod sir;
+pub mod sugarscape;

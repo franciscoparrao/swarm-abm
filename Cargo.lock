@@ -490,6 +490,7 @@ name = "schelling"
 version = "0.3.0"
 dependencies = [
  "swarm-core",
+ "swarm-models",
 ]
 
 [[package]]
@@ -554,6 +555,7 @@ name = "sugarscape"
 version = "0.3.0"
 dependencies = [
  "swarm-core",
+ "swarm-models",
 ]
 
 [[package]]

@@ -100,8 +100,9 @@ rows = sw.sir_sweep(betas=[0.05, 0.1, 0.2], seeds=range(30))
 Misma `(parámetros, semilla)` ⇒ resultado idéntico al binario nativo (paridad
 bit a bit verificada). El crate se construye con maturin y queda fuera del
 `cargo --workspace` (la feature `extension-module` de PyO3 no enlaza libpython).
-El modelo SIR es el primero expuesto; Schelling y Sugarscape siguen el mismo
-patrón.
+Modelos expuestos: `Sir`, `Schelling` y `Sugarscape` (misma API
+`run`/`series`/getters), con un barrido paralelo por modelo (`sir_sweep`,
+`schelling_sweep`, `sugarscape_sweep`).
 
 ## Validación: paridad numérica contra Mesa
 
@@ -169,8 +170,8 @@ se rompe bajo secuencial.
 
 **v0.4 (en curso):**
 
-- [x] Bindings PyO3 (API Python sobre el motor nativo) — modelo SIR + barrido
-  paralelo; falta exponer Schelling y Sugarscape.
+- [x] Bindings PyO3 (API Python sobre el motor nativo) — `Sir`, `Schelling` y
+  `Sugarscape` con barridos paralelos.
 - [ ] Visor WASM (correr modelos en el navegador).
 
 Ver el historial completo en [`CHANGELOG.md`](CHANGELOG.md).

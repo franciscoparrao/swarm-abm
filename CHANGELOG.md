@@ -9,21 +9,22 @@ puede cambiar entre minors.
 ### Añadido
 
 - **Bindings Python (PyO3)** en `crates/swarm-py` (módulo `swarm_abm`),
-  estrategia *modelos nativos + barridos*: clase `Sir` parametrizable con
-  `run`/`series`/getters, y `sir_sweep` (barrido `betas × seeds` en paralelo
-  con el GIL liberado). El bucle corre íntegro en Rust; paridad bit a bit con
-  el binario nativo verificada. Se construye con maturin (fuera del workspace).
-- **Crate `swarm-models`**: los modelos de referencia (empezando por SIR) se
-  extraen a una librería reutilizable por ejemplos, bindings y benches, para
-  no duplicar la física del modelo entre el ejecutable y el binding.
+  estrategia *modelos nativos + barridos*: clases `Sir`, `Schelling` y
+  `Sugarscape` (misma API `run`/`series`/getters) y un barrido paralelo por
+  modelo (`sir_sweep`, `schelling_sweep`, `sugarscape_sweep`, con el GIL
+  liberado). El bucle corre íntegro en Rust; paridad bit a bit con los
+  binarios nativos verificada. Se construye con maturin (fuera del workspace).
+- **Crate `swarm-models`**: los modelos de referencia (SIR, Schelling,
+  Sugarscape) se extraen a una librería reutilizable por ejemplos, bindings y
+  benches, para no duplicar la física entre el ejecutable y el binding.
 - **Ejemplo `sugarscape`** (Epstein & Axtell, 1996): movimiento + muerte de
   agentes + paisaje con estado; desigualdad emergente (Gini 0.24 → 0.42) y
   población autorregulada.
 
 ### Cambiado
 
-- `examples/sir` pasa a ser un binario delgado sobre `swarm-models::sir`
-  (misma salida, paridad bit a bit).
+- `examples/sir`, `examples/schelling` y `examples/sugarscape` pasan a ser
+  binarios delgados sobre `swarm-models` (misma salida, paridad bit a bit).
 - CI: cubre el camino `--no-default-features` (WASM/secuencial) y falla ante
   warnings de rustdoc.
 

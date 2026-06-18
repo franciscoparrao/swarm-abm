@@ -52,7 +52,21 @@ def barrido_beta():
     #   df.groupby("beta")["peak"].agg(["mean", "std"])
 
 
+def otros_modelos():
+    """Schelling y Sugarscape comparten la misma API (run / series / getters)."""
+    s = sw.Schelling(size=50, tolerance=0.375, seed=42)
+    s.run(200)
+    print(f"\nSchelling | conforme={s.fraction_happy:.2f} "
+          f"segregación={s.mean_similarity:.2f} estable={s.finished}")
+
+    g = sw.Sugarscape(size=50, n_agents=400, seed=42)
+    g.run(200)
+    print(f"Sugarscape | población={g.population} Gini={g.gini:.3f} "
+          f"(desigualdad emergente)")
+
+
 if __name__ == "__main__":
     print(f"swarm_abm {sw.__version__}\n")
     curva_epidemica()
     barrido_beta()
+    otros_modelos()
