@@ -9,7 +9,9 @@ Motor de modelado basado en agentes (ABM) espacial en Rust — un
 - `crates/swarm-core` — el motor: traits `Agent`/`Model`, scheduler
   (orden fijo, aleatorio o **simultáneo en dos fases**), `Grid2D` con
   vecindades Moore/Von Neumann y torus opcional, `DataCollector` de
-  series por paso y RNG sembrable (ChaCha8, portable entre plataformas).
+  series por paso, RNG sembrable (ChaCha8, portable entre plataformas), y
+  **batch runner** (`batch::run_ensemble` / `run_sweep`) para réplicas y
+  barridos de parámetros en paralelo (rayon, feature `parallel`).
 - `examples/schelling` — segregación de Schelling (1971).
 - `examples/sir` — SIR espacial (contagio en grilla).
 - `examples/difusion` — feromona depositada por caminantes que difunde

@@ -9,6 +9,13 @@ repository.workspace = true
 [dependencies]
 rand = { workspace = true }
 rand_chacha = { workspace = true }
+rayon = { workspace = true, optional = true }
+
+[features]
+# Ejecución paralela de ensembles/barridos (rayon). Activado por defecto;
+# desactivar (p. ej. para WASM) corre los ensembles secuencialmente.
+default = ["parallel"]
+parallel = ["dep:rayon"]
 
 [dev-dependencies]
 criterion = { workspace = true }

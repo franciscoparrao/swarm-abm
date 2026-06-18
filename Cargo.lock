@@ -541,6 +541,7 @@ dependencies = [
  "criterion",
  "rand",
  "rand_chacha",
+ "rayon",
 ]
 
 [[package]]

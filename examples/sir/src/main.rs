@@ -146,6 +146,51 @@ fn main() {
     let infected: usize = arg_value(&args, "--infected").unwrap_or(10);
     let max_steps: u64 = arg_value(&args, "--steps").unwrap_or(500);
 
+    // Modo ensemble: N réplicas en paralelo (batch runner del motor), reporta
+    // la distribución del pico y del tamaño final de la epidemia.
+    if let Some(runs) = arg_value::<u64>(&args, "--ensemble") {
+        let total = (width * height) as f64;
+        let outcomes = run_ensemble(
+            seed..seed + runs,
+            max_steps,
+            move |s| {
+                let mut sim = Simulation::new(build(width, height, infected, s), s);
+                sim.add_reporter("i", move |m: &Sir| m.count(Status::Infected) as f64 / total);
+                sim.add_reporter("r", move |m: &Sir| {
+                    m.count(Status::Recovered) as f64 / total
+                });
+                sim
+            },
+            |sim: &Simulation<Sir>| {
+                let peak = sim
+                    .data()
+                    .series("i")
+                    .map_or(0.0, |s| s.iter().copied().fold(0.0, f64::max));
+                let r_final = sim
+                    .data()
+                    .series("r")
+                    .and_then(|s| s.last().copied())
+                    .unwrap_or(0.0);
+                (peak, r_final)
+            },
+        );
+        let mean =
+            |f: fn(&(f64, f64)) -> f64| outcomes.iter().map(f).sum::<f64>() / outcomes.len() as f64;
+        let sd = |f: fn(&(f64, f64)) -> f64, m: f64| {
+            (outcomes.iter().map(|o| (f(o) - m).powi(2)).sum::<f64>() / outcomes.len() as f64)
+                .sqrt()
+        };
+        let (mp, mr) = (mean(|o| o.0), mean(|o| o.1));
+        println!(
+            "SIR ensemble: {runs} réplicas {width}x{height} | pico {:.1}% ± {:.1} | R final {:.1}% ± {:.1}",
+            mp * 100.0,
+            sd(|o| o.0, mp) * 100.0,
+            mr * 100.0,
+            sd(|o| o.1, mr) * 100.0,
+        );
+        return;
+    }
+
     let model = build(width, height, infected, seed);
     let n = model.agents.len() as f64;
 

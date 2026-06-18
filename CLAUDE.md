@@ -20,7 +20,10 @@ agentes en tiempo real + WASM para correr en navegador.
 - [x] API para definir modelos (trait `Agent`, `Model`; patrón take-out para el doble préstamo).
 - [x] Ejemplos: difusión, contagio (SIR espacial), Schelling — los 3 validados (difusión converge al punto fijo analítico).
 - [x] (v0.2) Activación simultánea en dos fases (`decide` con `&Model` inmutable + `apply`; validada con Game of Life).
-- [ ] (v0.3) Grafos/redes; batch runs + barrido de parámetros; viz WASM.
+- [x] (v0.3) Batch runs + barrido de parámetros: `swarm_core::batch`
+  (`run_ensemble`, `run_sweep`), paralelo con rayon tras feature `parallel`
+  (secuencial sin ella, para WASM). Generaliza el patrón ad-hoc de la calibración.
+- [ ] (v0.3) Grafos/redes como espacio; bindings PyO3; visor WASM.
 
 ## Arquitectura tentativa
 - `swarm-core`: motor; modelos como crates de ejemplo.

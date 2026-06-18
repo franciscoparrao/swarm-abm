@@ -72,6 +72,7 @@
 #![warn(clippy::unwrap_used)]
 
 pub mod agent;
+pub mod batch;
 pub mod data;
 pub mod grid;
 pub mod model;
@@ -82,6 +83,7 @@ pub mod sim;
 /// Re-exporta los tipos necesarios para definir y correr un modelo.
 pub mod prelude {
     pub use crate::agent::{Agent, AgentId, AgentSet};
+    pub use crate::batch::{SweepCell, run_ensemble, run_sweep};
     pub use crate::data::DataCollector;
     pub use crate::grid::{Grid2D, Neighborhood, Pos};
     pub use crate::model::Model;
