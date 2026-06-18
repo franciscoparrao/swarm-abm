@@ -2,6 +2,7 @@
 resolver = "3"
 members = [
     "crates/swarm-core",
+    "examples/boids",
     "examples/difusion",
     "examples/network-sir",
     "examples/schelling",

@@ -11,9 +11,12 @@ Motor de modelado basado en agentes (ABM) espacial en Rust — un
   vecindades Moore/Von Neumann y torus opcional, `DataCollector` de
   series por paso, RNG sembrable (ChaCha8, portable entre plataformas),
   **batch runner** (`batch::run_ensemble` / `run_sweep`) para réplicas y
-  barridos de parámetros en paralelo (rayon, feature `parallel`), y
-  **espacio de red** (`graph::Graph<T>`, análogo de `Grid2D`) con
-  generadores Erdős–Rényi, Watts–Strogatz y Barabási–Albert.
+  barridos de parámetros en paralelo (rayon, feature `parallel`),
+  **espacio de red** (`graph::Graph<T>`) con generadores Erdős–Rényi,
+  Watts–Strogatz y Barabási–Albert, y **espacio continuo**
+  (`continuous::ContinuousSpace<T>`, vecindad por radio + spatial hashing).
+  Tres paradigmas espaciales —grilla, grafo, continuo— bajo el mismo
+  `Agent`/`Model`.
 - `examples/schelling` — segregación de Schelling (1971).
 - `examples/sir` — SIR espacial (contagio en grilla).
 - `examples/difusion` — feromona depositada por caminantes que difunde
@@ -22,6 +25,9 @@ Motor de modelado basado en agentes (ABM) espacial en Rust — un
 - `examples/network-sir` — contagio SIR **sobre una red** (no una grilla):
   compara la dinámica epidémica sobre topologías aleatoria, mundo-pequeño y
   libre de escala. Demuestra que el mismo `Agent`/`Model` corre sobre grafo.
+- `examples/boids` — flocking de Reynolds en el **espacio continuo**: de
+  reglas locales (separación/alineación/cohesión) emerge una bandada
+  (orden de Vicsek 0.02 → 0.96).
 - `models/debris-flow` — **modelo cliente real**: flujos de detritos del
   evento Atacama 2015 (Copiapó, DEM 5871×5422 @ 30 m), port fiel de
   [debris-flow-abm](https://github.com/franciscoparrao/debris-flow-abm)

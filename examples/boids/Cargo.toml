@@ -1,0 +1,10 @@
+[package]
+name = "boids"
+description = "Flocking de Reynolds sobre el espacio continuo de swarm-core"
+publish = false
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+swarm-core = { workspace = true }

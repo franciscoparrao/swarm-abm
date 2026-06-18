@@ -26,6 +26,9 @@ agentes en tiempo real + WASM para correr en navegador.
 - [x] (v0.3) Grafos/redes como espacio: `swarm_core::graph::Graph<T>`
   (análogo de `Grid2D`) con generadores Erdős–Rényi, Watts–Strogatz (small-world)
   y Barabási–Albert (scale-free) deterministas. Ejemplo `network-sir`.
+- [x] (v0.3) Espacio continuo: `swarm_core::continuous::{ContinuousSpace, Vec2}`
+  con vecindad por radio y spatial hashing. Tercer paradigma espacial.
+  Ejemplo `boids` (flocking de Reynolds, orden de Vicsek 0.02→0.96).
 - [ ] (v0.3) Bindings PyO3; visor WASM.
 
 ## Arquitectura tentativa

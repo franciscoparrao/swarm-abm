@@ -73,6 +73,7 @@
 
 pub mod agent;
 pub mod batch;
+pub mod continuous;
 pub mod data;
 pub mod graph;
 pub mod grid;
@@ -85,6 +86,7 @@ pub mod sim;
 pub mod prelude {
     pub use crate::agent::{Agent, AgentId, AgentSet};
     pub use crate::batch::{SweepCell, run_ensemble, run_sweep};
+    pub use crate::continuous::{ContinuousSpace, PointId, Vec2};
     pub use crate::data::DataCollector;
     pub use crate::graph::{Graph, NodeId};
     pub use crate::grid::{Grid2D, Neighborhood, Pos};
