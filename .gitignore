@@ -1,4 +1,6 @@
 /target
+# target/ de crates fuera del workspace (p. ej. swarm-py, que usa maturin)
+target/
 
 # Python / maturin
 .venv/
