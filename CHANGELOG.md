@@ -4,6 +4,29 @@ Formato basado en [Keep a Changelog](https://keepachangelog.com/).
 El proyecto sigue [SemVer](https://semver.org/). Mientras `0.x`, la API
 puede cambiar entre minors.
 
+## [Sin publicar]
+
+### Añadido
+
+- **Bindings Python (PyO3)** en `crates/swarm-py` (módulo `swarm_abm`),
+  estrategia *modelos nativos + barridos*: clase `Sir` parametrizable con
+  `run`/`series`/getters, y `sir_sweep` (barrido `betas × seeds` en paralelo
+  con el GIL liberado). El bucle corre íntegro en Rust; paridad bit a bit con
+  el binario nativo verificada. Se construye con maturin (fuera del workspace).
+- **Crate `swarm-models`**: los modelos de referencia (empezando por SIR) se
+  extraen a una librería reutilizable por ejemplos, bindings y benches, para
+  no duplicar la física del modelo entre el ejecutable y el binding.
+- **Ejemplo `sugarscape`** (Epstein & Axtell, 1996): movimiento + muerte de
+  agentes + paisaje con estado; desigualdad emergente (Gini 0.24 → 0.42) y
+  población autorregulada.
+
+### Cambiado
+
+- `examples/sir` pasa a ser un binario delgado sobre `swarm-models::sir`
+  (misma salida, paridad bit a bit).
+- CI: cubre el camino `--no-default-features` (WASM/secuencial) y falla ante
+  warnings de rustdoc.
+
 ## [0.3.0] — 2026-06-18
 
 El motor pasa de un solo espacio (grilla) a **tres paradigmas espaciales

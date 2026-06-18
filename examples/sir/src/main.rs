@@ -5,125 +5,13 @@
 //! recupera con probabilidad `gamma` por paso. La simulación termina cuando
 //! no quedan infectados.
 //!
+//! El modelo vive en `swarm_models::sir` (compartido con los bindings Python);
+//! este binario es solo la interfaz de línea de comandos.
+//!
 //! Uso: `cargo run --release -p sir [semilla]`
 
 use swarm_core::prelude::*;
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum Status {
-    Susceptible,
-    Infected,
-    Recovered,
-}
-
-struct Person {
-    pos: Pos,
-    status: Status,
-}
-
-struct Sir {
-    agents: AgentSet<Person>,
-    grid: Grid2D<Option<AgentId>>,
-    beta: f64,
-    gamma: f64,
-}
-
-impl Sir {
-    fn count(&self, status: Status) -> usize {
-        self.agents
-            .iter()
-            .filter(|(_, p)| p.status == status)
-            .count()
-    }
-
-    fn infected_neighbors(&self, pos: Pos) -> u32 {
-        self.grid
-            .neighbors(pos, Neighborhood::Moore)
-            .filter(|(_, cell)| {
-                cell.is_some_and(|id| {
-                    self.agents
-                        .get(id)
-                        .is_some_and(|n| n.status == Status::Infected)
-                })
-            })
-            .count() as u32
-    }
-}
-
-impl Agent for Person {
-    type Model = Sir;
-
-    fn step(&mut self, _id: AgentId, model: &mut Sir, rng: &mut SimRng) {
-        match self.status {
-            Status::Susceptible => {
-                let k = model.infected_neighbors(self.pos);
-                if k > 0 {
-                    let p = 1.0 - (1.0 - model.beta).powi(k as i32);
-                    if rng.random_bool(p) {
-                        self.status = Status::Infected;
-                    }
-                }
-            }
-            Status::Infected => {
-                if rng.random_bool(model.gamma) {
-                    self.status = Status::Recovered;
-                }
-            }
-            Status::Recovered => {}
-        }
-    }
-}
-
-impl Model for Sir {
-    type Agent = Person;
-
-    fn agents(&self) -> &AgentSet<Person> {
-        &self.agents
-    }
-
-    fn agents_mut(&mut self) -> &mut AgentSet<Person> {
-        &mut self.agents
-    }
-
-    fn finished(&self) -> bool {
-        self.agents
-            .iter()
-            .all(|(_, p)| p.status != Status::Infected)
-    }
-}
-
-fn build(width: usize, height: usize, initial_infected: usize, seed: u64) -> Sir {
-    let mut rng = rng_from_seed(seed ^ 0x0510_5EED);
-    let mut agents = AgentSet::with_capacity(width * height);
-    let mut grid: Grid2D<Option<AgentId>> = Grid2D::new(width, height).with_torus(true);
-
-    let mut ids = Vec::with_capacity(width * height);
-    for y in 0..height {
-        for x in 0..width {
-            let pos = Pos::new(x, y);
-            let id = agents.insert(Person {
-                pos,
-                status: Status::Susceptible,
-            });
-            grid[pos] = Some(id);
-            ids.push(id);
-        }
-    }
-
-    ids.shuffle(&mut rng);
-    for &id in ids.iter().take(initial_infected) {
-        if let Some(p) = agents.get_mut(id) {
-            p.status = Status::Infected;
-        }
-    }
-
-    Sir {
-        agents,
-        grid,
-        beta: 0.08,
-        gamma: 0.1,
-    }
-}
+use swarm_models::sir::{Sir, SirConfig, Status, build};
 
 /// Valor de un flag `--nombre valor`, si está presente.
 fn arg_value<T: std::str::FromStr>(args: &[String], name: &str) -> Option<T> {
@@ -146,19 +34,23 @@ fn main() {
     let infected: usize = arg_value(&args, "--infected").unwrap_or(10);
     let max_steps: u64 = arg_value(&args, "--steps").unwrap_or(500);
 
+    let config = SirConfig {
+        width,
+        height,
+        initial_infected: infected,
+        ..Default::default()
+    };
+
     // Modo ensemble: N réplicas en paralelo (batch runner del motor), reporta
     // la distribución del pico y del tamaño final de la epidemia.
     if let Some(runs) = arg_value::<u64>(&args, "--ensemble") {
-        let total = (width * height) as f64;
         let outcomes = run_ensemble(
             seed..seed + runs,
             max_steps,
             move |s| {
-                let mut sim = Simulation::new(build(width, height, infected, s), s);
-                sim.add_reporter("i", move |m: &Sir| m.count(Status::Infected) as f64 / total);
-                sim.add_reporter("r", move |m: &Sir| {
-                    m.count(Status::Recovered) as f64 / total
-                });
+                let mut sim = Simulation::new(build(config, s), s);
+                sim.add_reporter("i", move |m: &Sir| m.fraction(Status::Infected));
+                sim.add_reporter("r", move |m: &Sir| m.fraction(Status::Recovered));
                 sim
             },
             |sim: &Simulation<Sir>| {
@@ -191,11 +83,6 @@ fn main() {
         return;
     }
 
-    let model = build(width, height, infected, seed);
-    let n = model.agents.len() as f64;
-
-    let mut sim = Simulation::new(model, seed);
-
     // Modo benchmark: sin reporters (Mesa tampoco mide métricas en su modo
     // --bench), solo la fase de simulación. Se reporta el mínimo de varias
     // repeticiones para filtrar ruido del SO (la corrida es determinista).
@@ -204,7 +91,7 @@ fn main() {
         let mut mejor_ms = f64::INFINITY;
         let mut pasos = 0;
         for _ in 0..reps {
-            let mut sim = Simulation::new(build(width, height, infected, seed), seed);
+            let mut sim = Simulation::new(build(config, seed), seed);
             let t0 = std::time::Instant::now();
             pasos = sim.run(max_steps);
             mejor_ms = mejor_ms.min(t0.elapsed().as_secs_f64() * 1000.0);
@@ -213,9 +100,10 @@ fn main() {
         return;
     }
 
-    sim.add_reporter("s", move |m: &Sir| m.count(Status::Susceptible) as f64 / n);
-    sim.add_reporter("i", move |m: &Sir| m.count(Status::Infected) as f64 / n);
-    sim.add_reporter("r", move |m: &Sir| m.count(Status::Recovered) as f64 / n);
+    let mut sim = Simulation::new(build(config, seed), seed);
+    sim.add_reporter("s", move |m: &Sir| m.fraction(Status::Susceptible));
+    sim.add_reporter("i", move |m: &Sir| m.fraction(Status::Infected));
+    sim.add_reporter("r", move |m: &Sir| m.fraction(Status::Recovered));
 
     let pasos = sim.run(max_steps);
 
@@ -236,7 +124,7 @@ fn main() {
         .and_then(|s| s.last().copied())
         .unwrap_or(0.0);
 
-    println!("SIR espacial 100x100 (torus) | beta 0.08, gamma 0.1 | semilla {seed}");
+    println!("SIR espacial {width}x{height} (torus) | beta 0.08, gamma 0.1 | semilla {seed}");
     println!("Epidemia terminada en {pasos} pasos");
     println!(
         "Pico de infectados: {:.1}% en el paso {paso_pico}",

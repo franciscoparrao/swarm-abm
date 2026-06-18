@@ -8,3 +8,4 @@ license.workspace = true
 
 [dependencies]
 swarm-core = { workspace = true }
+swarm-models = { workspace = true }

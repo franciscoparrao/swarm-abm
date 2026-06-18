@@ -540,6 +540,7 @@ name = "sir"
 version = "0.3.0"
 dependencies = [
  "swarm-core",
+ "swarm-models",
 ]
 
 [[package]]
@@ -563,6 +564,13 @@ dependencies = [
  "rand",
  "rand_chacha",
  "rayon",
+]
+
+[[package]]
+name = "swarm-models"
+version = "0.3.0"
+dependencies = [
+ "swarm-core",
 ]
 
 [[package]]

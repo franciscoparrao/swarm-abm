@@ -69,6 +69,40 @@ cargo run --release -p difusion [semilla]
 Misma semilla → resultados bit a bit idénticos (scheduler y RNG son
 deterministas). Ver el ejemplo de API completo en `crates/swarm-core/src/lib.rs`.
 
+## Bindings Python (PyO3)
+
+`crates/swarm-py` expone el motor a Python con la estrategia **modelos nativos
++ barridos**: los modelos viven compilados en Rust (`swarm-models`) y Python
+solo los configura, los dispara y recibe las series para analizarlas con
+numpy/pandas/matplotlib. El bucle de simulación corre **íntegro en Rust** —se
+conserva el speedup ~45–67× sobre Mesa— y los barridos de parámetros corren en
+paralelo (rayon) liberando el GIL.
+
+```bash
+python -m venv .venv && . .venv/bin/activate
+pip install maturin
+cd crates/swarm-py && maturin develop --release
+python demo.py
+```
+
+```python
+import swarm_abm as sw
+
+m = sw.Sir(size=200, beta=0.15, seed=42)
+m.run(500)
+infected = m.series("i")          # curva de infectados, lista por paso
+print(m.recovered)                # tamaño final de la epidemia
+
+# barrido paralelo de beta, a velocidad Rust → filas para un DataFrame
+rows = sw.sir_sweep(betas=[0.05, 0.1, 0.2], seeds=range(30))
+```
+
+Misma `(parámetros, semilla)` ⇒ resultado idéntico al binario nativo (paridad
+bit a bit verificada). El crate se construye con maturin y queda fuera del
+`cargo --workspace` (la feature `extension-module` de PyO3 no enlaza libpython).
+El modelo SIR es el primero expuesto; Schelling y Sugarscape siguen el mismo
+patrón.
+
 ## Validación: paridad numérica contra Mesa
 
 `validation/` contiene espejos exactos de Schelling y SIR escritos en
@@ -133,9 +167,10 @@ se rompe bajo secuencial.
 - [x] Benchmark formal vs Mesa (criterion + protocolo de paridad).
 - [x] Reescritura de `debris-flow-abm` sobre el motor (modelo cliente real).
 
-**v0.4 (siguiente):**
+**v0.4 (en curso):**
 
-- [ ] Bindings PyO3 (API Python sobre el motor nativo).
+- [x] Bindings PyO3 (API Python sobre el motor nativo) — modelo SIR + barrido
+  paralelo; falta exponer Schelling y Sugarscape.
 - [ ] Visor WASM (correr modelos en el navegador).
 
 Ver el historial completo en [`CHANGELOG.md`](CHANGELOG.md).

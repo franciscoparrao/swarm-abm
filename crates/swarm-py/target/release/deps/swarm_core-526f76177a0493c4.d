@@ -1,0 +1,17 @@
+/home/franciscoparrao/proyectos/swarm-abm/crates/swarm-py/target/release/deps/swarm_core-526f76177a0493c4.d: /home/franciscoparrao/proyectos/swarm-abm/crates/swarm-core/src/lib.rs /home/franciscoparrao/proyectos/swarm-abm/crates/swarm-core/src/agent.rs /home/franciscoparrao/proyectos/swarm-abm/crates/swarm-core/src/batch.rs /home/franciscoparrao/proyectos/swarm-abm/crates/swarm-core/src/continuous.rs /home/franciscoparrao/proyectos/swarm-abm/crates/swarm-core/src/data.rs /home/franciscoparrao/proyectos/swarm-abm/crates/swarm-core/src/graph.rs /home/franciscoparrao/proyectos/swarm-abm/crates/swarm-core/src/grid.rs /home/franciscoparrao/proyectos/swarm-abm/crates/swarm-core/src/model.rs /home/franciscoparrao/proyectos/swarm-abm/crates/swarm-core/src/rng.rs /home/franciscoparrao/proyectos/swarm-abm/crates/swarm-core/src/schedule.rs /home/franciscoparrao/proyectos/swarm-abm/crates/swarm-core/src/sim.rs
+
+/home/franciscoparrao/proyectos/swarm-abm/crates/swarm-py/target/release/deps/libswarm_core-526f76177a0493c4.rlib: /home/franciscoparrao/proyectos/swarm-abm/crates/swarm-core/src/lib.rs /home/franciscoparrao/proyectos/swarm-abm/crates/swarm-core/src/agent.rs /home/franciscoparrao/proyectos/swarm-abm/crates/swarm-core/src/batch.rs /home/franciscoparrao/proyectos/swarm-abm/crates/swarm-core/src/continuous.rs /home/franciscoparrao/proyectos/swarm-abm/crates/swarm-core/src/data.rs /home/franciscoparrao/proyectos/swarm-abm/crates/swarm-core/src/graph.rs /home/franciscoparrao/proyectos/swarm-abm/crates/swarm-core/src/grid.rs /home/franciscoparrao/proyectos/swarm-abm/crates/swarm-core/src/model.rs /home/franciscoparrao/proyectos/swarm-abm/crates/swarm-core/src/rng.rs /home/franciscoparrao/proyectos/swarm-abm/crates/swarm-core/src/schedule.rs /home/franciscoparrao/proyectos/swarm-abm/crates/swarm-core/src/sim.rs
+
+/home/franciscoparrao/proyectos/swarm-abm/crates/swarm-py/target/release/deps/libswarm_core-526f76177a0493c4.rmeta: /home/franciscoparrao/proyectos/swarm-abm/crates/swarm-core/src/lib.rs /home/franciscoparrao/proyectos/swarm-abm/crates/swarm-core/src/agent.rs /home/franciscoparrao/proyectos/swarm-abm/crates/swarm-core/src/batch.rs /home/franciscoparrao/proyectos/swarm-abm/crates/swarm-core/src/continuous.rs /home/franciscoparrao/proyectos/swarm-abm/crates/swarm-core/src/data.rs /home/franciscoparrao/proyectos/swarm-abm/crates/swarm-core/src/graph.rs /home/franciscoparrao/proyectos/swarm-abm/crates/swarm-core/src/grid.rs /home/franciscoparrao/proyectos/swarm-abm/crates/swarm-core/src/model.rs /home/franciscoparrao/proyectos/swarm-abm/crates/swarm-core/src/rng.rs /home/franciscoparrao/proyectos/swarm-abm/crates/swarm-core/src/schedule.rs /home/franciscoparrao/proyectos/swarm-abm/crates/swarm-core/src/sim.rs
+
+/home/franciscoparrao/proyectos/swarm-abm/crates/swarm-core/src/lib.rs:
+/home/franciscoparrao/proyectos/swarm-abm/crates/swarm-core/src/agent.rs:
+/home/franciscoparrao/proyectos/swarm-abm/crates/swarm-core/src/batch.rs:
+/home/franciscoparrao/proyectos/swarm-abm/crates/swarm-core/src/continuous.rs:
+/home/franciscoparrao/proyectos/swarm-abm/crates/swarm-core/src/data.rs:
+/home/franciscoparrao/proyectos/swarm-abm/crates/swarm-core/src/graph.rs:
+/home/franciscoparrao/proyectos/swarm-abm/crates/swarm-core/src/grid.rs:
+/home/franciscoparrao/proyectos/swarm-abm/crates/swarm-core/src/model.rs:
+/home/franciscoparrao/proyectos/swarm-abm/crates/swarm-core/src/rng.rs:
+/home/franciscoparrao/proyectos/swarm-abm/crates/swarm-core/src/schedule.rs:
+/home/franciscoparrao/proyectos/swarm-abm/crates/swarm-core/src/sim.rs:

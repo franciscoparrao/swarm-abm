@@ -2,6 +2,7 @@
 resolver = "3"
 members = [
     "crates/swarm-core",
+    "crates/swarm-models",
     "examples/boids",
     "examples/difusion",
     "examples/network-sir",
@@ -11,6 +12,11 @@ members = [
     "models/debris-flow",
 ]
 
+# swarm-py (bindings PyO3) se construye con maturin, no con cargo --workspace:
+# la feature extension-module de pyo3 no enlaza libpython, así que se queda
+# fuera del grafo del workspace para no perturbar `cargo build/clippy --workspace`.
+exclude = ["crates/swarm-py"]
+
 [workspace.package]
 version = "0.3.0"
 edition = "2024"
@@ -19,6 +25,7 @@ repository = "https://github.com/franciscoparrao/swarm-abm"
 
 [workspace.dependencies]
 swarm-core = { path = "crates/swarm-core" }
+swarm-models = { path = "crates/swarm-models" }
 rand = "0.9"
 rand_chacha = "0.9"
 criterion = "0.5"

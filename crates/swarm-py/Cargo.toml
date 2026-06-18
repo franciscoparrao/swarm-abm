@@ -1,0 +1,19 @@
+[package]
+name = "swarm-py"
+version = "0.4.0"
+edition = "2024"
+license = "MIT OR Apache-2.0"
+publish = false
+description = "Bindings Python (PyO3) de swarm-abm: modelos nativos + barridos paralelos a velocidad Rust"
+
+[lib]
+name = "swarm_abm"
+crate-type = ["cdylib"]
+
+[dependencies]
+swarm-core = { path = "../swarm-core" }
+swarm-models = { path = "../swarm-models" }
+
+[dependencies.pyo3]
+version = "0.23"
+features = ["extension-module"]
