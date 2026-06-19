@@ -8,6 +8,10 @@ puede cambiar entre minors.
 
 ### Añadido
 
+- **Visor WASM** en `crates/swarm-wasm`: compila el motor a WebAssembly y corre
+  Schelling, SIR y Sugarscape sobre un `<canvas>` (bucle en wasm, JS solo dibuja
+  el buffer RGBA por paso). Binario ~68 KB, determinista (paridad con native
+  verificada). Se construye con `wasm-pack` (fuera del workspace).
 - **Bindings Python (PyO3)** en `crates/swarm-py` (módulo `swarm_abm`),
   estrategia *modelos nativos + barridos*: clases `Sir`, `Schelling` y
   `Sugarscape` (misma API `run`/`series`/getters) y un barrido paralelo por
@@ -27,6 +31,9 @@ puede cambiar entre minors.
   binarios delgados sobre `swarm-models` (misma salida, paridad bit a bit).
 - CI: cubre el camino `--no-default-features` (WASM/secuencial) y falla ante
   warnings de rustdoc.
+- `rand` se usa sin default-features (solo `alloc`): el motor solo necesita RNG
+  sembrado (ChaCha8), no `std_rng`/`os_rng`/`thread_rng` — así no arrastra
+  `getrandom` y compila a `wasm32-unknown-unknown`.
 
 ## [0.3.0] — 2026-06-18
 

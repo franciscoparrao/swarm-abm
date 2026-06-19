@@ -7,4 +7,12 @@ edition.workspace = true
 license.workspace = true
 
 [dependencies]
-swarm-core = { workspace = true }
+# Path directo (no `workspace = true`) para poder apagar default-features:
+# el camino WASM pide swarm-models sin `parallel` → swarm-core sin rayon.
+swarm-core = { path = "../swarm-core", default-features = false }
+
+[features]
+# Activa el rayon de swarm-core (para ensembles/barridos paralelos). Activado
+# por defecto; los consumidores WASM piden `default-features = false`.
+default = ["parallel"]
+parallel = ["swarm-core/parallel"]

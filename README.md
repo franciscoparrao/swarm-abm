@@ -104,6 +104,20 @@ Modelos expuestos: `Sir`, `Schelling` y `Sugarscape` (misma API
 `run`/`series`/getters), con un barrido paralelo por modelo (`sir_sweep`,
 `schelling_sweep`, `sugarscape_sweep`).
 
+## Visor WASM (navegador)
+
+`crates/swarm-wasm` compila el motor a WebAssembly y corre los modelos
+(Schelling, SIR, Sugarscape) sobre un `<canvas>`, sin servidor de cálculo: el
+bucle vive en wasm y JavaScript solo dibuja el buffer RGBA de cada paso. El
+binario pesa ~68 KB y es determinista (misma semilla ⇒ misma corrida, paridad
+con native verificada).
+
+```bash
+cd crates/swarm-wasm
+wasm-pack build --target web --out-dir www/pkg --release
+cd www && python3 -m http.server 8000   # abrir http://localhost:8000
+```
+
 ## Validación: paridad numérica contra Mesa
 
 `validation/` contiene espejos exactos de Schelling y SIR escritos en
@@ -172,7 +186,8 @@ se rompe bajo secuencial.
 
 - [x] Bindings PyO3 (API Python sobre el motor nativo) — `Sir`, `Schelling` y
   `Sugarscape` con barridos paralelos.
-- [ ] Visor WASM (correr modelos en el navegador).
+- [x] Visor WASM (correr modelos en el navegador) — Schelling, SIR y
+  Sugarscape sobre canvas, binario ~68 KB.
 
 Ver el historial completo en [`CHANGELOG.md`](CHANGELOG.md).
 

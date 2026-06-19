@@ -1,0 +1,177 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>swarm-abm · visor WASM</title>
+<style>
+  :root { color-scheme: dark; }
+  body {
+    margin: 0; padding: 1.5rem;
+    font: 15px/1.5 system-ui, -apple-system, Segoe UI, Roboto, sans-serif;
+    background: #14161a; color: #e6e8ec;
+    display: flex; flex-direction: column; align-items: center; gap: 1rem;
+  }
+  h1 { font-size: 1.2rem; margin: 0; font-weight: 650; }
+  h1 small { font-weight: 400; color: #8b909a; }
+  .panel {
+    display: flex; flex-wrap: wrap; gap: .75rem 1rem; align-items: center;
+    justify-content: center; max-width: 560px;
+  }
+  .panel label { display: flex; flex-direction: column; font-size: 12px; color: #aab; gap: 2px; }
+  select, button, input[type=range] { accent-color: #5b8cff; }
+  select, button {
+    background: #232730; color: #e6e8ec; border: 1px solid #353b47;
+    border-radius: 7px; padding: .45rem .7rem; font: inherit; cursor: pointer;
+  }
+  button:hover { background: #2c313c; }
+  button.primary { background: #3a5bd0; border-color: #3a5bd0; }
+  button.primary:hover { background: #4368e6; }
+  canvas {
+    width: 500px; height: 500px; image-rendering: pixelated;
+    background: #000; border-radius: 8px; box-shadow: 0 6px 24px #0008;
+  }
+  #stats { font-variant-numeric: tabular-nums; color: #c7ccd6; min-height: 1.4em; }
+  .legend { display: flex; gap: 1rem; font-size: 12px; color: #aab; }
+  .legend i { display: inline-block; width: 11px; height: 11px; border-radius: 3px; margin-right: 4px; vertical-align: -1px; }
+  footer { color: #6b707b; font-size: 12px; max-width: 520px; text-align: center; }
+  code { background: #232730; padding: 1px 5px; border-radius: 4px; }
+</style>
+</head>
+<body>
+  <h1>swarm-abm <small>· motor Rust → WebAssembly, en tu navegador</small></h1>
+
+  <div class="panel">
+    <label>Modelo
+      <select id="model">
+        <option value="schelling">Schelling (segregación)</option>
+        <option value="sir">SIR (epidemia)</option>
+        <option value="sugarscape">Sugarscape (riqueza)</option>
+      </select>
+    </label>
+    <label id="paramWrap">·
+      <input type="range" id="param" />
+    </label>
+    <label>Tamaño <span id="sizeVal"></span>
+      <input type="range" id="size" min="40" max="160" step="10" value="100" />
+    </label>
+    <label>Velocidad <span id="speedVal"></span>
+      <input type="range" id="speed" min="1" max="10" step="1" value="1" />
+    </label>
+  </div>
+
+  <div class="panel">
+    <button class="primary" id="play">▶ Play</button>
+    <button id="stepBtn">⏭ Paso</button>
+    <button id="reset">↻ Reset</button>
+    <button id="dice">🎲 Otra semilla</button>
+  </div>
+
+  <canvas id="view" width="500" height="500"></canvas>
+  <div id="stats"></div>
+  <div class="legend" id="legend"></div>
+
+  <footer>
+    Todo corre en WebAssembly: el mismo motor que en native, sin servidor de
+    cálculo. Construir el visor: <code>wasm-pack build --target web --out-dir www/pkg</code>
+    y servir <code>www/</code> con <code>python3 -m http.server</code>.
+  </footer>
+
+<script type="module">
+import init, { Schelling, Sir, Sugarscape } from "./pkg/swarm_wasm.js";
+
+const $ = id => document.getElementById(id);
+const view = $("view"), ctx = view.getContext("2d");
+const off = document.createElement("canvas"); const offctx = off.getContext("2d");
+
+// Configuración por modelo: parámetro variable (rango + etiqueta) y leyenda.
+const MODELS = {
+  schelling: {
+    label: "Tolerancia", min: 0.1, max: 0.7, step: 0.05, def: 0.375,
+    make: (size, seed, p) => new Schelling(size, 0.85, p, seed),
+    legend: [["#dbdbdb","vacía"],["#db4444","grupo A"],["#426cdb","grupo B"]],
+    stats: (m, t) => `paso ${t} · conformes ${(m.happy*100).toFixed(0)}%` + (m.finished ? " · estable ✓" : ""),
+  },
+  sir: {
+    label: "β (contagio)", min: 0.02, max: 0.3, step: 0.01, def: 0.08,
+    make: (size, seed, p) => new Sir(size, p, 0.1, Math.max(5, (size*size*0.001)|0), seed),
+    legend: [["#58a858","susceptible"],["#db3c3c","infectado"],["#8e8e96","recuperado"]],
+    stats: (m, t) => `paso ${t} · infectados ${(m.infected*100).toFixed(1)}% · recuperados ${(m.recovered*100).toFixed(0)}%` + (m.finished ? " · fin ✓" : ""),
+  },
+  sugarscape: {
+    label: "Crecimiento", min: 1, max: 4, step: 1, def: 1,
+    make: (size, seed, p) => new Sugarscape(size, (size*size*0.16)|0, p, seed),
+    legend: [["#ffefaa","azúcar"],["#ebb919","máx"],["#1c1c20","agente"]],
+    stats: (m, t) => `paso ${t} · población ${m.population} · Gini ${m.gini.toFixed(3)}`,
+  },
+};
+
+let model, t = 0, playing = false, seed = 42, raf = null;
+
+function cfg() { return MODELS[$("model").value]; }
+
+function rebuild() {
+  const c = cfg();
+  const size = +$("size").value;
+  const p = +$("param").value;
+  model = c.make(size, seed, p);
+  t = 0;
+  draw(); stats();
+}
+
+function draw() {
+  const w = model.width, h = model.height;
+  if (off.width !== w || off.height !== h) { off.width = w; off.height = h; }
+  const img = new ImageData(new Uint8ClampedArray(model.pixels()), w, h);
+  offctx.putImageData(img, 0, 0);
+  ctx.imageSmoothingEnabled = false;
+  ctx.clearRect(0, 0, view.width, view.height);
+  ctx.drawImage(off, 0, 0, w, h, 0, 0, view.width, view.height);
+}
+
+function stats() { $("stats").textContent = cfg().stats(model, t); }
+
+function frame() {
+  if (playing) {
+    const n = +$("speed").value;
+    model.step(n); t += n;
+    draw(); stats();
+    if (model.finished) setPlaying(false);
+  }
+  raf = requestAnimationFrame(frame);
+}
+
+function setPlaying(on) {
+  playing = on;
+  $("play").textContent = on ? "⏸ Pausa" : "▶ Play";
+  $("play").classList.toggle("primary", !on);
+}
+
+function syncParam() {
+  const c = cfg();
+  const el = $("param");
+  el.min = c.min; el.max = c.max; el.step = c.step; el.value = c.def;
+  $("paramWrap").childNodes[0].textContent = c.label + " ";
+  $("legend").innerHTML = c.legend.map(([col, txt]) => `<span><i style="background:${col}"></i>${txt}</span>`).join("");
+}
+
+// Eventos
+$("model").onchange = () => { syncParam(); setPlaying(false); rebuild(); };
+$("param").oninput = rebuild;
+$("size").oninput = () => { $("sizeVal").textContent = $("size").value; rebuild(); };
+$("speed").oninput = () => { $("speedVal").textContent = "×" + $("speed").value; };
+$("play").onclick = () => setPlaying(!playing);
+$("stepBtn").onclick = () => { setPlaying(false); model.step(1); t += 1; draw(); stats(); };
+$("reset").onclick = () => { setPlaying(false); rebuild(); };
+$("dice").onclick = () => { seed = (Math.random() * 1e9) | 0; setPlaying(false); rebuild(); };
+
+init().then(() => {
+  $("sizeVal").textContent = $("size").value;
+  $("speedVal").textContent = "×" + $("speed").value;
+  syncParam();
+  rebuild();
+  frame();
+});
+</script>
+</body>
+</html>

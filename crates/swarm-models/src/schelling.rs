@@ -86,6 +86,35 @@ impl Schelling {
         self.agents.len()
     }
 
+    /// Ancho de la grilla.
+    #[must_use]
+    pub fn width(&self) -> usize {
+        self.grid.width()
+    }
+
+    /// Alto de la grilla.
+    #[must_use]
+    pub fn height(&self) -> usize {
+        self.grid.height()
+    }
+
+    /// Categoría por celda en orden fila-mayor, para visualización:
+    /// `0` vacía, `1` grupo Red, `2` grupo Blue.
+    #[must_use]
+    pub fn cells(&self) -> Vec<u8> {
+        self.grid
+            .iter()
+            .map(|(_, cell)| match cell {
+                None => 0,
+                Some(id) => match self.agents.get(*id).map(|p| p.group) {
+                    Some(Group::Red) => 1,
+                    Some(Group::Blue) => 2,
+                    None => 0,
+                },
+            })
+            .collect()
+    }
+
     /// Fracción de agentes conformes (felices) con su vecindario.
     #[must_use]
     pub fn fraction_happy(&self) -> f64 {
@@ -193,6 +222,22 @@ mod tests {
         };
         let m = build(cfg, 1);
         assert_eq!(m.population(), (400.0_f64 * 0.9).round() as usize);
+    }
+
+    #[test]
+    fn cells_tiene_un_valor_por_celda() {
+        let cfg = SchellingConfig {
+            width: 10,
+            height: 8,
+            density: 0.5,
+            tolerance: 0.5,
+        };
+        let m = build(cfg, 1);
+        let cells = m.cells();
+        assert_eq!(cells.len(), 80);
+        assert!(cells.iter().all(|&c| c <= 2));
+        // Hay tantas celdas no vacías como agentes.
+        assert_eq!(cells.iter().filter(|&&c| c != 0).count(), m.population());
     }
 
     #[test]

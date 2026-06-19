@@ -116,6 +116,34 @@ impl Sugarscape {
     pub fn wealths(&self) -> Vec<u32> {
         self.agents.iter().map(|(_, a)| a.sugar).collect()
     }
+
+    /// Ancho de la grilla.
+    #[must_use]
+    pub fn width(&self) -> usize {
+        self.grid.width()
+    }
+
+    /// Alto de la grilla.
+    #[must_use]
+    pub fn height(&self) -> usize {
+        self.grid.height()
+    }
+
+    /// Categoría por celda en orden fila-mayor, para visualización: nivel de
+    /// azúcar presente `0..=4`, o `5` si la celda está ocupada por un agente.
+    #[must_use]
+    pub fn cells(&self) -> Vec<u8> {
+        self.grid
+            .iter()
+            .map(|(_, cell)| {
+                if cell.occupant.is_some() {
+                    5
+                } else {
+                    cell.sugar.min(4) as u8
+                }
+            })
+            .collect()
+    }
 }
 
 impl Agent for Ant {

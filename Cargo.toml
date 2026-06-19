@@ -15,7 +15,7 @@ members = [
 # swarm-py (bindings PyO3) se construye con maturin, no con cargo --workspace:
 # la feature extension-module de pyo3 no enlaza libpython, así que se queda
 # fuera del grafo del workspace para no perturbar `cargo build/clippy --workspace`.
-exclude = ["crates/swarm-py"]
+exclude = ["crates/swarm-py", "crates/swarm-wasm"]
 
 [workspace.package]
 version = "0.3.0"
@@ -26,7 +26,9 @@ repository = "https://github.com/franciscoparrao/swarm-abm"
 [workspace.dependencies]
 swarm-core = { path = "crates/swarm-core" }
 swarm-models = { path = "crates/swarm-models" }
-rand = "0.9"
+# Sin default-features: el motor solo usa RNG sembrado (ChaCha8), no necesita
+# std_rng/os_rng/thread_rng (que arrastran getrandom y no compilan en wasm).
+rand = { version = "0.9", default-features = false, features = ["alloc"] }
 rand_chacha = "0.9"
 criterion = "0.5"
 serde_json = "1"

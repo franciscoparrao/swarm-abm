@@ -2,6 +2,9 @@
 # target/ de crates fuera del workspace (p. ej. swarm-py, que usa maturin)
 target/
 
+# WASM (paquete generado por wasm-pack)
+crates/swarm-wasm/www/pkg/
+
 # Python / maturin
 .venv/
 __pycache__/

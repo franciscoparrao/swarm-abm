@@ -77,6 +77,35 @@ impl Sir {
         self.agents.len()
     }
 
+    /// Ancho de la grilla.
+    #[must_use]
+    pub fn width(&self) -> usize {
+        self.grid.width()
+    }
+
+    /// Alto de la grilla.
+    #[must_use]
+    pub fn height(&self) -> usize {
+        self.grid.height()
+    }
+
+    /// Categoría por celda en orden fila-mayor, para visualización:
+    /// `0` susceptible, `1` infectado, `2` recuperado.
+    #[must_use]
+    pub fn cells(&self) -> Vec<u8> {
+        self.grid
+            .iter()
+            .map(|(_, cell)| {
+                cell.and_then(|id| self.agents.get(id))
+                    .map_or(0, |p| match p.status {
+                        Status::Susceptible => 0,
+                        Status::Infected => 1,
+                        Status::Recovered => 2,
+                    })
+            })
+            .collect()
+    }
+
     /// Fracción de la población en un estado dado.
     #[must_use]
     pub fn fraction(&self, status: Status) -> f64 {
