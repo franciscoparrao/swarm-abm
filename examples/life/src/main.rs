@@ -8,9 +8,11 @@
 //! secuencial (lo garantiza el RNG por-agente y el modelo inmutable en `decide`).
 //!
 //! Uso:
-//!   cargo run --release -p life [semilla]
-//!   cargo run --release -p life -- --bench [--parallel] --width 2000 --height 2000 --steps 100
-//!   RAYON_NUM_THREADS=4 cargo run --release -p life -- --bench --parallel ...
+//! ```text
+//! cargo run --release -p life [semilla]
+//! cargo run --release -p life -- --bench [--parallel] --width 2000 --height 2000 --steps 100
+//! RAYON_NUM_THREADS=4 cargo run --release -p life -- --bench --parallel ...
+//! ```
 
 use swarm_core::prelude::*;
 
