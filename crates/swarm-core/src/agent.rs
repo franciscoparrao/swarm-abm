@@ -1,6 +1,6 @@
 //! Trait [`Agent`] y almacenamiento de agentes ([`AgentSet`]).
 
-use crate::rng::SimRng;
+use crate::rng::{SimRng, child_rng};
 
 /// Identificador estable de un agente dentro de un [`AgentSet`].
 ///
@@ -72,10 +72,22 @@ pub trait Agent: Sized {
 /// **Limitación v0.1**: un agente no puede eliminarse a sí mismo durante su
 /// propio `step` (está fuera del set en ese momento). Registra la baja en el
 /// estado del modelo y elimínalo en [`Model::after_step`](crate::model::Model::after_step).
-#[derive(Debug, Default)]
+#[derive(Debug)]
 pub struct AgentSet<A> {
     slots: Vec<Option<A>>,
     live: usize,
+}
+
+// Default manual (no derivado) para no exigir `A: Default`: los campos son
+// `Vec`/`usize`, que tienen `Default` propio. Necesario para `mem::take` del
+// set en la fase `decide` simultánea.
+impl<A> Default for AgentSet<A> {
+    fn default() -> Self {
+        Self {
+            slots: Vec::new(),
+            live: 0,
+        }
+    }
 }
 
 impl<A> AgentSet<A> {
@@ -184,6 +196,43 @@ impl<A> AgentSet<A> {
         if let Some(slot) = self.slots.get_mut(id.0) {
             *slot = Some(agent);
         }
+    }
+}
+
+impl<A: Agent> AgentSet<A> {
+    /// Fase `decide` (activación simultánea), **secuencial**: cada agente decide
+    /// con su RNG por-agente —determinista por `(seed, step, id)`— observando el
+    /// modelo inmutable. El set debe estar separado del modelo (patrón
+    /// double-buffer): `decide` lee el entorno y un snapshot, no el set vivo.
+    pub(crate) fn decide_all(&mut self, model: &A::Model, seed: u64, step: u64) {
+        for (i, slot) in self.slots.iter_mut().enumerate() {
+            if let Some(agent) = slot {
+                let mut rng = child_rng(seed, step, i as u64);
+                agent.decide(AgentId(i), model, &mut rng);
+            }
+        }
+    }
+
+    /// Igual que [`decide_all`](Self::decide_all) pero **en paralelo** (rayon).
+    ///
+    /// Produce el **mismo resultado bit a bit** que la versión secuencial: el
+    /// RNG de cada agente depende solo de `(seed, step, id)` —nunca del hilo— y
+    /// `decide` recibe el modelo *inmutable*, así que el compilador garantiza
+    /// que ningún agente escribe estado compartido durante la fase. Es la
+    /// inmutabilidad probada por el tipo lo que vuelve seguro el paralelismo.
+    #[cfg(feature = "parallel")]
+    pub(crate) fn decide_all_par(&mut self, model: &A::Model, seed: u64, step: u64)
+    where
+        A: Send,
+        A::Model: Sync,
+    {
+        use rayon::prelude::*;
+        self.slots.par_iter_mut().enumerate().for_each(|(i, slot)| {
+            if let Some(agent) = slot {
+                let mut rng = child_rng(seed, step, i as u64);
+                agent.decide(AgentId(i), model, &mut rng);
+            }
+        });
     }
 }
 

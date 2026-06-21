@@ -8,6 +8,19 @@ puede cambiar entre minors.
 
 ### Añadido
 
+- **`decide` paralelo intra-paso** para activación simultánea
+  (`Simulation::run_parallel` / `step_parallel`, feature `parallel`): la fase
+  `decide` se reparte entre hilos con rayon y da un resultado **bit-idéntico**
+  al secuencial, gracias a un RNG por-agente (`rng::child_rng`, derivado de
+  `(semilla, paso, id)`) y a que `decide` recibe el modelo inmutable (el
+  compilador prueba que no hay escritura compartida). `step`/`run` siguen
+  genéricos y secuenciales (no se exige `Send`/`Sync` ni se afecta el camino
+  WASM). Escala ~5× a 16 hilos en decisiones compute-bound (Amdahl: `apply`
+  sigue secuencial). Ejemplo `life` (Juego de la Vida) como banco; V&V en
+  `tests/parallel_decide.rs`; medición en `validation/SCALABILITY.md`.
+- Benchmark **cross-engine** vs Agents.jl (Julia) y Mesa: swarm-abm ~2–5× más
+  rápido que Agents.jl y ~45–184× que Mesa en SIR y Schelling
+  (`validation/CROSS_ENGINE.md`).
 - **Visor WASM** en `crates/swarm-wasm`: compila el motor a WebAssembly y corre
   Schelling, SIR y Sugarscape sobre un `<canvas>` (bucle en wasm, JS solo dibuja
   el buffer RGBA por paso). Binario ~68 KB, determinista (paridad con native

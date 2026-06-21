@@ -5,6 +5,7 @@ members = [
     "crates/swarm-models",
     "examples/boids",
     "examples/difusion",
+    "examples/life",
     "examples/network-sir",
     "examples/schelling",
     "examples/sir",

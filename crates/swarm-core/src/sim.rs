@@ -17,6 +17,8 @@ pub struct Simulation<M: Model> {
     pub model: M,
     schedule: Schedule,
     rng: SimRng,
+    /// Semilla original: raíz de los RNG por-agente de la fase `decide`.
+    seed: u64,
     collector: DataCollector<M>,
     steps_done: u64,
     /// Buffer de orden de activación, reutilizado entre pasos para no
@@ -32,6 +34,7 @@ impl<M: Model> Simulation<M> {
             model,
             schedule: Schedule::default(),
             rng: rng_from_seed(seed),
+            seed,
             collector: DataCollector::new(),
             steps_done: 0,
             order_buf: Vec::new(),
@@ -55,46 +58,69 @@ impl<M: Model> Simulation<M> {
     }
 
     /// Ejecuta exactamente un paso de la simulación.
+    ///
+    /// En activación simultánea, la fase `decide` corre **secuencial** con un
+    /// RNG por-agente determinista; ver
+    /// [`step_parallel`](Self::step_parallel) para correrla en paralelo con
+    /// resultado bit-idéntico.
     pub fn step(&mut self) {
-        self.model.before_step(&mut self.rng);
-
-        self.model.agents().collect_ids_into(&mut self.order_buf);
+        self.begin_step();
         match self.schedule.activation() {
             Activation::Simultaneous => {
-                // Fase 1: todos deciden observando el mismo estado (modelo
-                // inmutable). Fase 2: todos aplican. Los agentes creados en
-                // `apply` recién se activan en el paso siguiente.
-                for i in 0..self.order_buf.len() {
-                    let id = self.order_buf[i];
-                    if let Some(mut agent) = self.model.agents_mut().take(id) {
-                        agent.decide(id, &self.model, &mut self.rng);
-                        self.model.agents_mut().put_back(id, agent);
-                    }
-                }
-                for i in 0..self.order_buf.len() {
-                    let id = self.order_buf[i];
-                    if let Some(mut agent) = self.model.agents_mut().take(id) {
-                        agent.apply(id, &mut self.model, &mut self.rng);
-                        self.model.agents_mut().put_back(id, agent);
-                    }
-                }
+                self.decide_phase_seq();
+                self.apply_phase();
             }
-            _ => {
-                self.schedule
-                    .order_in_place(&mut self.order_buf, &mut self.rng);
-                for i in 0..self.order_buf.len() {
-                    let id = self.order_buf[i];
-                    // Patrón take-out: el agente sale del set mientras corre
-                    // su step, lo que permite pasarle `&mut self.model` sin
-                    // doble préstamo.
-                    if let Some(mut agent) = self.model.agents_mut().take(id) {
-                        agent.step(id, &mut self.model, &mut self.rng);
-                        self.model.agents_mut().put_back(id, agent);
-                    }
-                }
+            _ => self.activate_sequential(),
+        }
+        self.end_step();
+    }
+
+    /// `before_step` + reconstrucción del buffer de ids vivos.
+    fn begin_step(&mut self) {
+        self.model.before_step(&mut self.rng);
+        self.model.agents().collect_ids_into(&mut self.order_buf);
+    }
+
+    /// Activación secuencial (orden fijo o aleatorio) con el patrón take-out:
+    /// el agente sale del set mientras corre su `step`, lo que permite pasarle
+    /// `&mut self.model` sin doble préstamo.
+    fn activate_sequential(&mut self) {
+        self.schedule
+            .order_in_place(&mut self.order_buf, &mut self.rng);
+        for i in 0..self.order_buf.len() {
+            let id = self.order_buf[i];
+            if let Some(mut agent) = self.model.agents_mut().take(id) {
+                agent.step(id, &mut self.model, &mut self.rng);
+                self.model.agents_mut().put_back(id, agent);
             }
         }
+    }
 
+    /// Fase `decide` simultánea, **secuencial**. Saca el set del modelo (patrón
+    /// double-buffer): así `decide` recibe `&Model` con el set vacío —lee el
+    /// entorno y los snapshots, no los agentes vivos— y se devuelve al terminar.
+    /// RNG por-agente: el resultado no depende del orden de recorrido.
+    fn decide_phase_seq(&mut self) {
+        let mut agents = std::mem::take(self.model.agents_mut());
+        agents.decide_all(&self.model, self.seed, self.steps_done);
+        *self.model.agents_mut() = agents;
+    }
+
+    /// Fase `apply` simultánea (siempre secuencial): materializa lo decidido y
+    /// resuelve colisiones en orden de inserción. Los agentes creados en
+    /// `apply` recién se activan en el paso siguiente.
+    fn apply_phase(&mut self) {
+        for i in 0..self.order_buf.len() {
+            let id = self.order_buf[i];
+            if let Some(mut agent) = self.model.agents_mut().take(id) {
+                agent.apply(id, &mut self.model, &mut self.rng);
+                self.model.agents_mut().put_back(id, agent);
+            }
+        }
+    }
+
+    /// `after_step` + avance del contador + recolección de datos.
+    fn end_step(&mut self) {
         self.model.after_step(&mut self.rng);
         self.steps_done += 1;
         self.collector.collect(self.steps_done, &self.model);
@@ -133,6 +159,55 @@ impl<M: Model> Simulation<M> {
     /// Acceso mutable al RNG (p. ej. para inicializaciones posteriores).
     pub fn rng_mut(&mut self) -> &mut SimRng {
         &mut self.rng
+    }
+}
+
+/// Variante paralela de la fase `decide` simultánea (feature `parallel`).
+///
+/// Requiere `M: Sync` y `M::Agent: Send` (necesario para repartir el trabajo
+/// entre hilos). Es una API **opcional y explícita**: [`step`](Simulation::step)
+/// y [`run`](Simulation::run) siguen siendo genéricos y secuenciales, de modo
+/// que los modelos que no son `Sync`/`Send` y el camino WASM no se ven afectados.
+#[cfg(feature = "parallel")]
+impl<M: Model> Simulation<M>
+where
+    M: Sync,
+    M::Agent: Send,
+{
+    /// Como [`step`](Self::step), pero la fase `decide` de la activación
+    /// simultánea corre **en paralelo** (rayon). El resultado es **idéntico bit
+    /// a bit** al de `step`: el RNG de cada agente depende solo de
+    /// `(semilla, paso, id)` —nunca del hilo— y `decide` recibe el modelo
+    /// inmutable. Para activación no simultánea equivale a `step`.
+    pub fn step_parallel(&mut self) {
+        self.begin_step();
+        match self.schedule.activation() {
+            Activation::Simultaneous => {
+                self.decide_phase_par();
+                self.apply_phase();
+            }
+            _ => self.activate_sequential(),
+        }
+        self.end_step();
+    }
+
+    /// Como [`run`](Self::run) pero con [`step_parallel`](Self::step_parallel).
+    pub fn run_parallel(&mut self, max_steps: u64) -> u64 {
+        if self.collector.is_empty() {
+            self.collector.collect(self.steps_done, &self.model);
+        }
+        let mut done = 0;
+        while done < max_steps && !self.model.finished() {
+            self.step_parallel();
+            done += 1;
+        }
+        done
+    }
+
+    fn decide_phase_par(&mut self) {
+        let mut agents = std::mem::take(self.model.agents_mut());
+        agents.decide_all_par(&self.model, self.seed, self.steps_done);
+        *self.model.agents_mut() = agents;
     }
 }
 

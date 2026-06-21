@@ -34,6 +34,10 @@ Motor de modelado basado en agentes (ABM) espacial en Rust — un
   homogénea emerge una distribución de riqueza desigual (Gini 0.24 → 0.42) y
   la población se autorregula a la capacidad de carga. Ejercita movimiento +
   muerte de agentes (baja diferida en `after_step`) + paisaje con estado.
+- `examples/life` — Juego de la Vida de Conway, el modelo canónico de
+  **activación simultánea**; sirve de banco para el **`decide` paralelo**
+  (`--bench --parallel --work N`): escala ~5× a 16 hilos cuando la decisión por
+  agente es compute-bound. Ver `validation/SCALABILITY.md`.
 - `models/debris-flow` — **modelo cliente real**: flujos de detritos del
   evento Atacama 2015 (Copiapó, DEM 5871×5422 @ 30 m), port fiel de
   [debris-flow-abm](https://github.com/franciscoparrao/debris-flow-abm)
@@ -170,6 +174,14 @@ usuario). Un modelo escrito como `decide`/`apply` corre bajo cualquier
 política: el `step` por defecto los encadena. Validado con el Juego de
 la Vida (`tests/simultaneous.rs`): el blinker oscila bajo simultánea y
 se rompe bajo secuencial.
+
+Esa inmutabilidad probada por el compilador es lo que vuelve seguro
+**paralelizar la fase `decide`** (`Simulation::run_parallel`, feature
+`parallel`): cada agente usa un RNG por-agente derivado de `(semilla, paso,
+id)` —no del hilo—, de modo que el resultado es **bit-idéntico** al secuencial
+sin importar cuántos hilos (verificado en `tests/parallel_decide.rs`). Escala
+~5× a 16 hilos en decisiones compute-bound; detalle en
+`validation/SCALABILITY.md`.
 
 ## Roadmap
 

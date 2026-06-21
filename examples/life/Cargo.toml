@@ -1,0 +1,15 @@
+[package]
+name = "life"
+description = "Juego de la Vida de Conway: activación simultánea y decide paralelo"
+publish = false
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+# Path directo para poder reenviar la feature `parallel` (default ON).
+swarm-core = { path = "../../crates/swarm-core", default-features = false }
+
+[features]
+default = ["parallel"]
+parallel = ["swarm-core/parallel"]
