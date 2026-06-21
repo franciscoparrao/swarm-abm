@@ -43,12 +43,12 @@ class Person(Agent):
 
 
 class SchellingModel(Model):
-    def __init__(self, seed):
+    def __init__(self, seed, width=WIDTH, height=HEIGHT):
         super().__init__(seed=seed)
-        self.grid = SingleGrid(WIDTH, HEIGHT, torus=True)
-        coords = [(x, y) for y in range(HEIGHT) for x in range(WIDTH)]
+        self.grid = SingleGrid(width, height, torus=True)
+        coords = [(x, y) for y in range(height) for x in range(width)]
         self.random.shuffle(coords)
-        n_agents = round(WIDTH * HEIGHT * DENSITY)
+        n_agents = round(width * height * DENSITY)
         for i, pos in enumerate(coords[:n_agents]):
             self.grid.place_agent(Person(self, i % 2), pos)
 
@@ -83,11 +83,33 @@ def run_one(seed, out_dir):
         w.writerows(rows)
 
 
+def bench_one(seed, width, height, steps):
+    """Pasos fijos (sin corte por convergencia), midiendo solo el stepping —
+    espejo de `schelling --bench`. Construcción fuera del cronómetro."""
+    import time
+
+    model = SchellingModel(seed, width, height)
+    t0 = time.perf_counter()
+    for _ in range(steps):
+        model.step()
+    ms = (time.perf_counter() - t0) * 1000.0
+    print(f"steps,ms\n{steps},{ms:.3f}")
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--seeds", type=int, default=20)
-    ap.add_argument("--out", type=pathlib.Path, required=True)
+    ap.add_argument("--out", type=pathlib.Path)
+    ap.add_argument("--width", type=int, default=WIDTH)
+    ap.add_argument("--height", type=int, default=HEIGHT)
+    ap.add_argument("--steps", type=int, default=100)
+    ap.add_argument("--bench", type=int, metavar="SEED", default=None)
     args = ap.parse_args()
+    if args.bench is not None:
+        bench_one(args.bench, args.width, args.height, args.steps)
+        return
+    if args.out is None:
+        ap.error("--out es requerido salvo en modo --bench")
     args.out.mkdir(parents=True, exist_ok=True)
     for seed in range(args.seeds):
         run_one(seed, args.out)

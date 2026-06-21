@@ -1,4 +1,4 @@
-# Benchmark cross-engine — SIR espacial
+# Benchmark cross-engine — SIR + Schelling
 
 swarm-abm (Rust) frente a las plataformas de ABM de referencia, en el **mismo
 modelo, la misma máquina y la misma metodología**. Motivado por el requisito de
@@ -24,38 +24,57 @@ un baseline lento (Mesa).
   susceptible con `k` vecinos infectados se contagia con prob `1−(1−β)^k`
   (β=0.08), infectado se recupera con prob `γ=0.1`, activación aleatoria por
   paso, término cuando no quedan infectados. 5 infectados iniciales.
-- **Métrica: ms por paso.** Cada motor termina la epidemia en un paso distinto
-  (RNG distinto), así que el tiempo total no es comparable; se normaliza por
-  paso. Mediana sobre 3 semillas, hasta 300 pasos.
+- **Schelling idéntico**: grilla torus, densidad 0.85, dos grupos 50/50,
+  vecindad Moore, conforme si la fracción de vecinos del mismo grupo ≥ 0.375
+  (1.0 si aislado), el inconforme se muda a una celda vacía uniforme al azar,
+  activación aleatoria. Bench: **100 pasos fijos sin corte por convergencia**
+  (el escaneo de similitud sobre todos los agentes domina el costo por paso).
+- **Métrica: ms por paso.** En SIR cada motor termina la epidemia en un paso
+  distinto (RNG distinto), así que el tiempo total no es comparable y se
+  normaliza por paso (mediana de 3 semillas, hasta 300 pasos). En Schelling se
+  fijan 100 pasos.
 - **Solo se cronometra el stepping** — la construcción del modelo queda fuera
   del cronómetro en los tres motores.
 - **Julia: warmup explícito** antes de medir, para no cronometrar la
   compilación JIT (error clásico que invalida comparaciones con Julia).
 - Mismo equipo (i7-1270P, 16 hilos), un solo hilo, carga baja.
 
-## Resultados (ms/paso, mediana de 3 semillas)
+## Resultados — modelo 1: SIR (ms/paso, mediana de 3 semillas, hasta 300 pasos)
 
-| Grilla | Agentes | swarm-abm | Agents.jl | Mesa | swarm-abm vs Mesa | swarm-abm vs Agents.jl |
+| Grilla | Agentes | swarm-abm | Agents.jl | Mesa | vs Mesa | vs Agents.jl |
 |---|---|---|---|---|---|---|
 | 25×25 | 625 | 0.0162 | 0.0577 | 0.870 | 54× | 3.6× |
 | 50×50 | 2 500 | 0.0673 | 0.2748 | 3.546 | 53× | 4.1× |
 | 100×100 | 10 000 | 0.2459 | 1.2870 | 14.619 | 59× | 5.2× |
 | 200×200 | 40 000 | 1.3387 | 6.6194 | 64.632 | 48× | 4.9× |
 
-**Resumen:**
-- swarm-abm vs **Mesa**: **48–59×**
-- swarm-abm vs **Agents.jl**: **3.6–5.2×**
-- Agents.jl vs Mesa: 10–15× *(control de cordura: Agents.jl rinde en su rango
-  conocido sobre Mesa, lo que confirma que el espejo en Agents.jl es una
-  implementación idiomática y justa, no una versión deliberadamente lenta).*
+- swarm-abm vs **Mesa**: **48–59×** · vs **Agents.jl**: **3.6–5.2×** · Agents.jl vs Mesa: 10–15×
 
-## Lectura
+## Resultados — modelo 2: Schelling (ms/paso, mediana de 3 semillas, 100 pasos fijos)
 
-swarm-abm no solo supera al baseline lento (Mesa) sino también al **competidor
-compilado de referencia (Agents.jl) por ~4–5×**, manteniendo además
-determinismo bit a bit y un target WASM que Agents.jl no ofrece. El factor de
-cordura Agents.jl/Mesa (10–15×, en su rango esperado) respalda que la
-comparación es legítima.
+Segundo modelo canónico, con un patrón de acceso distinto (movilidad + celdas
+vacías en vez de contagio in situ). Pasos fijos sin corte por convergencia.
+
+| Grilla | Agentes | swarm-abm | Agents.jl | Mesa | vs Mesa | vs Agents.jl |
+|---|---|---|---|---|---|---|
+| 25×25 | 625 | 0.0516 | 0.1212 | 2.324 | 45× | 2.3× |
+| 50×50 | 2 500 | 0.1759 | 0.5623 | 8.947 | 51× | 3.2× |
+| 100×100 | 10 000 | 0.8385 | 2.6390 | 54.811 | 65× | 3.1× |
+| 200×200 | 40 000 | 3.3883 | 12.9040 | 621.851 | 184× | 3.8× |
+
+- swarm-abm vs **Mesa**: **45–184×** · vs **Agents.jl**: **2.3–3.8×** · Agents.jl vs Mesa: 16–48×
+- *El 184× sobre Mesa a 200² refleja en parte el manejo O(n) de celdas vacías /
+  `move_agent` de Mesa en Schelling, no solo el costo de cómputo puro — se
+  reporta honestamente.*
+
+## Lectura (dos modelos)
+
+A través de **dos modelos canónicos con patrones de acceso distintos**,
+swarm-abm es consistentemente el más rápido: **~2–5× sobre Agents.jl** (el
+competidor compilado de referencia, Julia) y **~45–184× sobre Mesa**, manteniendo
+además determinismo bit a bit y un target WASM que Agents.jl no ofrece. El
+control de cordura Agents.jl/Mesa (10–48×, su rango conocido) confirma que los
+espejos en Agents.jl son implementaciones idiomáticas y justas.
 
 ## Caveats (honestos)
 

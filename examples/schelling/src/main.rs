@@ -29,8 +29,29 @@ fn main() {
         .unwrap_or(42);
     let csv = args.iter().any(|a| a == "--csv");
     let max_steps: u64 = arg_value(&args, "--steps").unwrap_or(200);
+    let width: usize = arg_value(&args, "--width").unwrap_or(50);
+    let height: usize = arg_value(&args, "--height").unwrap_or(50);
 
-    let config = SchellingConfig::default();
+    let config = SchellingConfig {
+        width,
+        height,
+        ..Default::default()
+    };
+
+    // Modo benchmark: pasos fijos (sin corte por convergencia), sin reporters,
+    // cronometrando solo el stepping. Reporta steps,ms como sir --bench.
+    if args.iter().any(|a| a == "--bench") {
+        let bench_steps: u64 = arg_value(&args, "--steps").unwrap_or(100);
+        let mut sim = Simulation::new(build(config, seed), seed);
+        let t0 = std::time::Instant::now();
+        for _ in 0..bench_steps {
+            sim.step();
+        }
+        let ms = t0.elapsed().as_secs_f64() * 1000.0;
+        println!("steps,ms\n{bench_steps},{ms:.3}");
+        return;
+    }
+
     let model = build(config, seed);
     let n = model.population();
 
