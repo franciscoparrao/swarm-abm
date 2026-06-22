@@ -367,14 +367,14 @@ second on a single thread (criterion microbenchmarks), so the cross-engine
 margins reflect a genuinely fast core rather than a favourable model size.
 
 We also compared against krABMaga \cite{antelmi2024krabmaga,antelmi2019rust},
-the other performance-oriented Rust ABM framework, on the same spatial SIR. The
-two are in the same single-thread throughput ballpark: implemented with
-krABMaga's efficient scalar field, it runs the model at roughly the same
-per-step cost as swarm-abm (within a factor of two either way across the grid
-sizes above). We therefore make no raw-speed claim over krABMaga; what swarm-abm
-adds relative to it is \emph{deterministic, reproducible parallelism} and the
-compiler-verified synchronous update, neither of which krABMaga provides
-(Section~\ref{sec:discussion}). The mirror is in the repository.
+the other performance-oriented Rust ABM framework, on the same spatial SIR and
+Schelling models. Implemented with krABMaga's efficient scalar field, it is in
+fact \emph{modestly faster} than swarm-abm on raw single-thread per-step cost,
+by up to roughly $2\times$ across both models. We therefore make no raw-speed
+claim over krABMaga; what swarm-abm adds relative to it is \emph{deterministic,
+reproducible parallelism} and the compiler-verified synchronous update, neither
+of which krABMaga provides (Section~\ref{sec:discussion}). The mirrors are in
+the repository.
 
 \subsection{Scalability of the parallel decision phase}
 The deterministic parallel decision phase (Section~\ref{sec:sync}) is the
@@ -489,9 +489,9 @@ deterministic parallelism and a WebAssembly target. The closest comparator is
 krABMaga \cite{antelmi2024krabmaga,antelmi2019rust}, a MASON-derived Rust
 framework that, like swarm-abm, offers a fast core, intra-step parallelism and a
 WebAssembly target, and that is mature in areas we do not address (distributed
-model exploration, a rich visualiser). On raw single-thread throughput the two
-are comparable (Section~\ref{sec:perf}). What distinguishes swarm-abm is not
-speed but \emph{guarantees}: krABMaga parallelises agent scheduling without
+model exploration, a rich visualiser), and is in fact modestly faster on raw
+single-thread throughput (Section~\ref{sec:perf}). What distinguishes swarm-abm
+is therefore not speed but \emph{guarantees}: krABMaga parallelises agent scheduling without
 guaranteeing that the parallel result is reproducible, and, like the others,
 leaves the synchronous-update correctness condition to the modeller. swarm-abm's
 contribution is precisely to make both into guarantees: bit-identical parallel
