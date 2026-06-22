@@ -224,7 +224,12 @@ snapshot the model publishes before the phase, the same double-buffering
 discipline that ABM correctness requires, now enforced rather than trusted. The
 remedy itself (double-buffering) is well known; what is new is that the type
 system makes it mandatory rather than advisory, which is also what licenses the
-safe parallelism of Section~\ref{sec:sync} below. The
+safe parallelism of Section~\ref{sec:sync} below. We are precise about the scope
+of the guarantee: the compiler prevents an agent from writing the model during
+\texttt{decide}, but it does not certify that the snapshot the author publishes
+captures everything a correct decision needs. The guarantee is the absence of
+accidental shared-state writes, not a proof that the model's update logic is
+itself correct. The
 classic test case is Conway's Game of Life: under simultaneous activation a
 blinker oscillates correctly, whereas the same model under sequential
 activation does not; the engine ships this as a regression test.
@@ -246,13 +251,23 @@ the parallel result \emph{bit-for-bit identical} to the sequential one:
   \item The apply phase remains sequential and commits in insertion order, so
   collision resolution is deterministic.
 \end{enumerate}
-The resulting property is stated plainly: for any model expressible under the
-parallel API, whose snapshot contract the type system enforces, and for any
-thread count, the parallel run produces the same state, bit-for-bit, as the
-sequential run. We verify it empirically on a stochastic model
-(Section~\ref{sec:vv}). This is the payoff of the framing:
-the same proof that buys correctness buys reproducible parallelism, a
-combination the reference tools do not provide.
+We can state the resulting property as follows.
+\begin{quote}
+\emph{Property (deterministic parallelism).} For any model whose \texttt{decide}
+reads only the environment and a snapshot the model publishes before the phase
+(a precondition the type system enforces, by making the model immutable in
+\texttt{decide}), and for any number of threads, the parallel run produces the
+same state, bit-for-bit, as the sequential run.
+\end{quote}
+We verify it empirically on a stochastic model (Section~\ref{sec:vv}). In the
+vocabulary of parallel and distributed simulation this property is
+\emph{repeatability} \cite{fujimoto1990pdes,fujimoto2000pads}: identical outputs
+for identical inputs, irrespective of the parallel schedule. Repeatability is a
+long-studied and hard-won goal there, classically pursued through
+synchronisation protocols or deterministic-replay machinery. What is distinctive
+in swarm-abm is the \emph{mechanism}: repeatability follows by construction from
+the type system, with no runtime protocol, and it holds bit-for-bit across
+thread counts and (empirically) across platforms.
 
 \section{Verification and validation}
 \label{sec:vv}
@@ -419,7 +434,11 @@ event, Chile) on swarm-abm, faithfully porting a Mesa/Python original
 identical inputs while running about $100\times$ faster (from $130$--$240$~s to
 $1.2$--$4$~s per run on a $31.8$-million-cell domain). It also recovers
 reproducibility the original lacked: the original drew from an unseeded
-global generator, so its runs could not be replicated.
+global generator, so its runs could not be replicated. We are explicit about
+novelty here: the debris-flow model and its calibration results belong to the
+separate manuscript cited above; what \emph{this} paper contributes is the
+engine and the demonstration that its throughput makes the two studies below
+feasible. The debris-flow results are not re-claimed as new.
 
 The point of the application is not the geomorphology but what the engine's
 throughput \emph{enables} methodologically. Two studies that were impractical in
@@ -480,7 +499,15 @@ requirement of a credible computational science, and shown that it can be
 guaranteed rather than hoped for: deterministic across seeds, across machines
 (x86-64 and WebAssembly), and across thread counts. The type-enforced
 synchronous update is the kernel that makes the parallel case hold, turning a
-correctness proof into a reproducibility guarantee.
+correctness proof into a reproducibility guarantee. The kernel is realised here
+with Rust's ownership and borrowing, but the principle is language-agnostic: it
+asks only for a type discipline that can enforce a read-only view of the model
+during the decision phase, which const-correctness, ownership or capability
+systems can all provide. The contribution is the principle, not the language.
+That swarm-abm trades some throughput, and single-node operation, for these
+guarantees is a deliberate choice: an ABM whose results cannot be replicated
+exactly, across machines or as it is scaled, is a weaker basis for inference, and
+we take exact reproducibility to be worth that cost.
 
 \paragraph{Relation to other engines.}
 swarm-abm occupies the same niche as Agents.jl, a fast, single-machine,

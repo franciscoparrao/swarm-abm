@@ -9,15 +9,19 @@
 
 | # | Sev | Issue | Acción | Tipo | Esfuerzo | Estado |
 |---|-----|-------|--------|------|----------|--------|
-| C1 | 🔴 | Sin contexto de la literatura PADS sobre determinismo/reproducibilidad en simulación paralela | Buscar refs PADS + párrafo de related work + re-acotar el claim de novedad | escritura+lit | M | ☐ |
-| C2 | 🔴 | Historia HPC débil; krABMaga más rápido + distribuido | (a) defender el trade-off determinismo-vs-velocidad en §8 + crisis de reproducibilidad; (b) opcional: paralelizar fase `apply` | escritura / ingeniería | S / L | ☐ |
-| C3 | 🟠 | "Compiler-verified" se lee como feature de Rust, no aporte de M&S general | Párrafo: el principio (inmutabilidad de la fase decide por tipos) generaliza más allá de Rust | escritura | S | ☐ |
-| S1 | 🟡 | La garantía es más angosta de lo enunciado (el snapshot lo construye el autor) | Enunciar el límite explícito en §3 | escritura | S | ☐ |
+| C1 | 🔴 | Sin contexto de la literatura PADS sobre determinismo/reproducibilidad en simulación paralela | §3.3: situado como *repeatability* de PADS (Fujimoto 1990/2000), novedad re-acotada al MECANISMO (por tipos, no por protocolo) | escritura+lit | M | ☑ |
+| C2 | 🔴 | Historia HPC débil; krABMaga más rápido + distribuido | (a) trade-off defendido en Discusión (reproducibilidad como requisito, vale el costo); (b) paralelizar `apply` PENDIENTE (opcional) | escritura / ingeniería | S / L | ◑ (a hecho, b pend.) |
+| C3 | 🟠 | "Compiler-verified" se lee como feature de Rust, no aporte de M&S general | Discusión: principio agnóstico al lenguaje (const-correctness/ownership/capabilities); "the contribution is the principle, not the language" | escritura | S | ☑ |
+| S1 | 🟡 | La garantía es más angosta de lo enunciado (el snapshot lo construye el autor) | §3.2: scope explícito — el compilador impide escribir el modelo, no certifica el snapshot | escritura | S | ☑ |
 | S2 | 🟡 | Benchmarks con solo 3 réplicas, sin IC (vs 50 en la paridad) | Re-correr con N réplicas + reportar IC/IQR | experimento | M | ☐ |
 | S3 | 🟡 | Solo 2 modelos de grilla; grafo/continuo sin medir | Medir throughput de swarm-abm en grafo (network-sir) y continuo (boids) | experimento | M–L | ☐ |
-| S4 | 🟡 | Frontera con el manuscrito ESPL poco clara | Frase: qué es nuevo aquí vs el manuscrito debris-flow | escritura | S | ☐ |
-| S5 | 🟡 | Sin enunciado formal de la propiedad | Proposición etiquetada con precondición (contrato snapshot) y alcance | escritura | S | ☐ |
+| S4 | 🟡 | Frontera con el manuscrito ESPL poco clara | §6: delimitado — el motor es de este paper; el modelo/calibración debris-flow son del manuscrito ESPL, no re-reclamados | escritura | S | ☑ |
+| S5 | 🟡 | Sin enunciado formal de la propiedad | §3.3: Property (deterministic parallelism) etiquetada con precondición del snapshot y alcance | escritura | S | ☑ |
 | Z | 🟢 | Depósito archivado (Zenodo DOI) — también en R1 #12 | Acuñar DOI (post-ESPL) | admin | S | ☐ |
+
+> **Estado (2026-06-22):** bloque de escritura HECHO (C1, C2a, C3, S1, S4, S5;
+> compila 18 pp, em-dashes 0, refs Fujimoto verificadas). PENDIENTE: experimentos
+> opcionales S2 (réplicas+IC), S3 (grafo/continuo), C2b (paralelizar apply), y Z.
 
 ## 🔴 Detalle de los deciders accept/reject
 
