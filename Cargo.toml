@@ -7,6 +7,7 @@ members = [
     "examples/difusion",
     "examples/life",
     "examples/network-sir",
+    "examples/rng-dump",
     "examples/schelling",
     "examples/sir",
     "examples/sugarscape",

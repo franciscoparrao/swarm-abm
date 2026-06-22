@@ -21,6 +21,11 @@ puede cambiar entre minors.
 - Benchmark **cross-engine** vs Agents.jl (Julia) y Mesa: swarm-abm ~2–5× más
   rápido que Agents.jl y ~45–184× que Mesa en SIR y Schelling
   (`validation/CROSS_ENGINE.md`).
+- **V&V del RNG y determinismo cross-platform** (`validation/RNG_AND_DETERMINISM.md`):
+  el stream inter-agente de `child_rng` pasa PractRand 0.95 sin anomalías hasta
+  1 GB (decorrelación entre agentes), y los modelos dan resultados **bit-idénticos
+  entre x86-64 y wasm32** (métricas sensibles a la configuración: segregación de
+  Schelling, Gini de Sugarscape). Herramienta `examples/rng-dump`.
 - **Visor WASM** en `crates/swarm-wasm`: compila el motor a WebAssembly y corre
   Schelling, SIR y Sugarscape sobre un `<canvas>` (bucle en wasm, JS solo dibuja
   el buffer RGBA por paso). Binario ~68 KB, determinista (paridad con native

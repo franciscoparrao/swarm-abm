@@ -80,6 +80,14 @@ impl Schelling {
         self.sim.model.fraction_happy()
     }
 
+    /// Índice de segregación (similitud media de vecindario) — métrica sensible
+    /// a la configuración exacta.
+    #[wasm_bindgen(getter)]
+    #[must_use]
+    pub fn mean_similarity(&self) -> f64 {
+        self.sim.model.mean_similarity()
+    }
+
     /// `true` si todos los agentes están conformes (sistema estable).
     #[wasm_bindgen(getter)]
     #[must_use]

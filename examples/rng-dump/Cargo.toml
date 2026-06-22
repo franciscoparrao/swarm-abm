@@ -1,0 +1,10 @@
+[package]
+name = "rng-dump"
+description = "Vuelca el stream RNG del motor (raw bytes) para baterías estadísticas externas (PractRand)"
+publish = false
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+swarm-core = { workspace = true }
