@@ -205,9 +205,10 @@ state. The defining requirement is that all agents decide against one
 consistent snapshot. If, during decision, an agent reads a neighbour that has
 already written its \emph{next} state, the snapshot is no longer consistent and
 the update is silently wrong, a classic and easily introduced verification
-defect. In NetLogo, Mesa, Repast and Agents.jl this correctness condition is
-maintained by user discipline (writing to a separate ``next'' field, or reading
-from a hand-built snapshot); nothing in the tooling prevents a violation.
+defect. In NetLogo, Mesa, Repast, Agents.jl and the Rust framework krABMaga
+\cite{antelmi2024krabmaga} this correctness condition is maintained by user
+discipline (writing to a separate ``next'' field, or reading from a hand-built
+snapshot); nothing in the tooling prevents a violation.
 
 \subsection{A guarantee from the type system}
 swarm-abm makes the condition a compile-time guarantee. The decision method
@@ -365,6 +366,16 @@ In absolute terms, the engine sustains tens of millions of agent-steps per
 second on a single thread (criterion microbenchmarks), so the cross-engine
 margins reflect a genuinely fast core rather than a favourable model size.
 
+We also compared against krABMaga \cite{antelmi2024krabmaga,antelmi2019rust},
+the other performance-oriented Rust ABM framework, on the same spatial SIR. The
+two are in the same single-thread throughput ballpark: implemented with
+krABMaga's efficient scalar field, it runs the model at roughly the same
+per-step cost as swarm-abm (within a factor of two either way across the grid
+sizes above). We therefore make no raw-speed claim over krABMaga; what swarm-abm
+adds relative to it is \emph{deterministic, reproducible parallelism} and the
+compiler-verified synchronous update, neither of which krABMaga provides
+(Section~\ref{sec:discussion}). The mirror is in the repository.
+
 \subsection{Scalability of the parallel decision phase}
 The deterministic parallel decision phase (Section~\ref{sec:sync}) is the
 engine's intra-step parallelism. Its benefit depends on whether per-agent
@@ -474,11 +485,21 @@ correctness proof into a reproducibility guarantee.
 \paragraph{Relation to other engines.}
 swarm-abm occupies the same niche as Agents.jl, a fast, single-machine,
 general ABM framework, and is faster on our benchmarks while adding
-deterministic parallelism and a WebAssembly target. It is complementary to
-distributed and GPU engines: Repast HPC \cite{collier2013repast} targets
-clusters and FLAME GPU \cite{richmond2023flamegpu} targets the GPU, regimes we
-do not address. Standard model-description practice such as the ODD protocol
-\cite{grimm2006odd} is orthogonal and compatible.
+deterministic parallelism and a WebAssembly target. The closest comparator is
+krABMaga \cite{antelmi2024krabmaga,antelmi2019rust}, a MASON-derived Rust
+framework that, like swarm-abm, offers a fast core, intra-step parallelism and a
+WebAssembly target, and that is mature in areas we do not address (distributed
+model exploration, a rich visualiser). On raw single-thread throughput the two
+are comparable (Section~\ref{sec:perf}). What distinguishes swarm-abm is not
+speed but \emph{guarantees}: krABMaga parallelises agent scheduling without
+guaranteeing that the parallel result is reproducible, and, like the others,
+leaves the synchronous-update correctness condition to the modeller. swarm-abm's
+contribution is precisely to make both into guarantees: bit-identical parallel
+execution and a compiler-verified synchronous update. swarm-abm is also
+complementary to distributed and GPU engines: Repast HPC \cite{collier2013repast}
+targets clusters and FLAME GPU \cite{richmond2023flamegpu} targets the GPU,
+regimes we do not address. Standard model-description practice such as the ODD
+protocol \cite{grimm2006odd} is orthogonal and compatible.
 
 \paragraph{Limitations.}
 Defining a new model requires writing Rust, a higher barrier than NetLogo's or

@@ -8,7 +8,7 @@
 
 | # | Dim | Sev | Issue | Acción | Esfuerzo | Estado |
 |---|-----|-----|-------|--------|----------|--------|
-| 1 | D7 | 🔴 | Falta krABMaga (competidor Rust directo) | Citar + posicionar (y ver benchmark) | M–L | ☐ |
+| 1 | D7 | 🔴 | Falta krABMaga (competidor Rust directo) | Citado (§3/§5/§8) + benchmark SIR hecho: krABMaga competitivo/+rápido → posicionado por determinismo, sin claim de velocidad | M–L | ☑ |
 | 2 | D3 | 🔴 | "Parity" desde test no significativo (falacia de equivalencia) | Reencuadrado: lidera el bound de efecto; el z-test es "no detectable difference" | S | ☑ |
 | 3 | D4 | 🔴 | "By construction" mezcla garantizado (hilos) vs empírico (plataformas) | §4.3: cross-platform marcado como empírico, distinto del caso hilos | S | ☑ |
 | 4 | D1 | 🟡 | "the fastest compiled ABM framework" (superlativo) | → "one of the fastest compiled ABM frameworks" (3×) | S | ☑ |
@@ -21,8 +21,14 @@
 | 11 | D5 | 🟢 | No preempta "double-buffering ya resuelve esto" | §3.2: frase directa añadida | S | ☑ |
 | 12 | D6 | 🟢 | Placeholders: autor/afiliación, DOI Zenodo, decl. IA | Llenar al cierre | S | ☐ |
 
-> **Estado (2026-06-22):** bloque de edición #2–#11 APLICADO (compila, 16 pp).
-> Pendiente: #1 (krABMaga) y #12 (placeholders).
+> **Estado (2026-06-22):** bloque de edición #2–#11 APLICADO + #1 (krABMaga)
+> RESUELTO. Benchmark SIR head-to-head reveló que krABMaga es competitivo/más
+> rápido en throughput crudo (su number-grid corre a ~igual costo/paso;
+> el object-grid lo hacía ver lento por alocación de Vec, descartado). Se
+> posiciona honestamente: sin claim de velocidad vs krABMaga; el diferenciador
+> es el determinismo (paralelo bit-idéntico + update verificado por el
+> compilador), que krABMaga no garantiza. Citado en §3, §5 y §8. Compila, 17 pp.
+> **Pendiente: solo #12 (placeholders autor/afiliación, DOI Zenodo, decl. IA).**
 
 Esfuerzo: S = minutos (edición), M = horas, L = día+ (experimento/código).
 
