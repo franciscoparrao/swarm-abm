@@ -1,0 +1,197 @@
+%% swarm-abm — manuscript for Simulation Modelling Practice and Theory (SIMPAT)
+%% Elsevier elsarticle class. Submission format: [review] (single column,
+%% double spaced, line numbers). Final two-column look: replace with [5p].
+\documentclass[review]{elsarticle}
+
+\usepackage{lineno}
+\usepackage{amsmath}
+\usepackage{booktabs}
+\usepackage{graphicx}
+\usepackage[hidelinks]{hyperref}
+\modulolinenumbers[5]
+
+\journal{Simulation Modelling Practice and Theory}
+\bibliographystyle{elsarticle-num}
+
+\begin{document}
+
+\begin{frontmatter}
+
+\title{swarm-abm: a deterministic, multi-paradigm engine for spatial
+agent-based simulation with compiler-verified parallel updates}
+
+%% TODO: author names, affiliations, corresponding author
+\author[a]{First Author\corref{cor1}}
+\ead{author@example.org}
+\cortext[cor1]{Corresponding author}
+\affiliation[a]{organization={Affiliation},
+            city={City},
+            country={Country}}
+
+\begin{abstract}
+Agent-based modelling (ABM) underpins research across ecology, epidemiology,
+the social sciences and the geosciences, yet the reference platforms ---
+NetLogo and Mesa --- trade performance for accessibility, and their per-run
+cost constrains experimental design. We present swarm-abm, a spatial ABM
+engine in Rust that unifies three spatial paradigms (regular grid, network and
+continuous space) under a single agent/model API, with bit-for-bit
+deterministic, seedable random number generation. Its core methodological
+contribution is a two-phase synchronous (simultaneous) update whose read-only
+decision phase is enforced by the type system: the compiler proves that no
+agent can mutate shared state during decision, which (i) removes a classic
+verification pitfall of synchronous ABM --- read-after-write --- by
+construction, and (ii) makes the decision phase safe to parallelise. Combined
+with a per-agent deterministic generator, parallel execution is bit-for-bit
+identical to sequential regardless of thread count; we validate the generator
+stream with PractRand and confirm identical results across CPU (x86-64) and
+WebAssembly (wasm32) targets. On two canonical models (spatial SIR, Schelling),
+swarm-abm runs 2--5$\times$ faster single-threaded than Agents.jl --- the
+fastest compiled ABM framework --- and 45--184$\times$ faster than Mesa; the
+parallel decision phase scales $\sim$5$\times$ on 16 cores for compute-bound
+decisions. We demonstrate the engine on a real application whose performance
+enables a statistically powered comparison of five metaheuristic calibrators,
+and provide Python bindings and a WebAssembly viewer. The engine is open
+source.
+\end{abstract}
+
+\begin{keyword}
+agent-based modelling \sep simulation framework \sep reproducibility \sep
+parallel simulation \sep verification and validation \sep Rust
+\end{keyword}
+
+\end{frontmatter}
+
+\linenumbers
+
+\section{Introduction}
+\label{sec:intro}
+
+Agent-based modelling (ABM) is a workhorse method across ecology, epidemiology,
+the social sciences and the geosciences: it builds system-level behaviour from
+the bottom up, out of local interactions among many heterogeneous agents. Two
+platforms dominate practice --- NetLogo~\cite{wilensky1999netlogo}, on the Java
+virtual machine, and Mesa~\cite{kazil2020mesa}, in Python. Both prioritise
+accessibility, and both pay for it in performance.
+
+Performance is not a mere convenience here: \emph{the cost of a single run
+shapes the science that gets done}. When one replicate of a spatial model takes
+minutes, studies default to a single run per condition, calibrations are tuned
+to a single random seed (and silently overfit it), and sensitivity analyses are
+truncated. The methodological consequences are real, and they are invisible in
+the published result. A faster engine does not merely save wall-clock time; it
+widens the space of experimental designs that are feasible at all.
+
+We identify three gaps in current spatial ABM tooling, and a fourth concern
+that is specific to \emph{synchronous} (simultaneous) update. (1)
+\textbf{Reproducibility}: many models rely on a global, unseeded generator, so
+results cannot be replicated bit-for-bit --- a weak foundation for a
+computational science. (2) \textbf{Performance}: the per-run cost forces the
+impoverished experimental designs noted above. (3) \textbf{Spatial generality}:
+tools tend to privilege one spatial paradigm, so moving a question from a grid
+to a network to a continuous space typically means a rewrite. (4) The
+\textbf{synchronous-update pitfall}: in two-phase (decide/apply) update, every
+agent must decide against the \emph{same} snapshot of the world; if any agent
+reads a neighbour's freshly written state during the decision phase
+(read-after-write), the update is silently corrupted. In existing frameworks
+this is a matter of user discipline, not a guarantee.
+
+This paper presents \textbf{swarm-abm}, a spatial ABM engine written in Rust
+that addresses all four. Its contributions are:
+
+\begin{itemize}
+  \item A \textbf{multi-paradigm engine} that exposes a regular grid, a network
+  (graph) and a continuous space under one \texttt{Agent}/\texttt{Model} API,
+  with seedable, portable, bit-for-bit deterministic random numbers
+  (Section~\ref{sec:design}).
+  \item A \textbf{compiler-verified synchronous update}: the decision phase
+  receives the model immutably, so the type system \emph{proves} that no agent
+  writes shared state during decision. This removes read-after-write by
+  construction (a verification guarantee, not a convention) and is precisely
+  what makes the phase safe to parallelise (Section~\ref{sec:sync}).
+  \item \textbf{Deterministic parallelism}: a per-agent generator keyed on
+  $(\text{seed}, \text{step}, \text{agent})$ makes parallel execution
+  bit-for-bit identical to sequential, independent of thread count. We validate
+  the generator with PractRand and confirm bit-identical results across x86-64
+  and WebAssembly (Section~\ref{sec:vv}).
+  \item A \textbf{performance evaluation against the real peers}: on spatial SIR
+  and Schelling, swarm-abm is 2--5$\times$ faster single-threaded than
+  Agents.jl~\cite{datseris2022agents} --- the fastest compiled ABM framework ---
+  and 45--184$\times$ faster than Mesa; the parallel decision phase scales
+  $\sim$5$\times$ on 16 cores when per-agent decisions are compute-bound
+  (Section~\ref{sec:perf}).
+  \item A \textbf{real-world demonstration} in which the engine's throughput
+  turns a previously infeasible study --- a statistically powered comparison of
+  five metaheuristic calibrators --- into a routine one
+  (Section~\ref{sec:app}), plus Python bindings and a WebAssembly viewer
+  (Section~\ref{sec:access}).
+\end{itemize}
+
+The remainder of the paper is organised as follows.
+Section~\ref{sec:design} describes the engine.
+Section~\ref{sec:sync} develops the synchronous-update guarantee and
+deterministic parallelism. Section~\ref{sec:vv} reports verification and
+validation. Section~\ref{sec:perf} reports performance and scalability.
+Section~\ref{sec:app} presents the application. Section~\ref{sec:access} covers
+accessibility and reproducibility. Sections~\ref{sec:discussion}
+and~\ref{sec:conclusion} discuss and conclude.
+
+\section{Engine design}
+\label{sec:design}
+% TODO: traits Agent/Model; take-out borrow pattern; tres espacios (Grid2D,
+% Graph, ContinuousSpace) bajo una API; scheduler (ordered/random/simultaneous);
+% SimRng ChaCha8; DataCollector; batch (run_ensemble/run_sweep, rayon). Fig 1.
+
+\section{Synchronous update as a verification guarantee, and deterministic parallelism}
+\label{sec:sync}
+% TODO: la fase decide recibe &Model inmutable -> el compilador prueba no-escritura;
+% read-after-write imposible por construccion. Doble buffer via mem::take.
+% RNG por-agente child_rng(seed,step,id) -> paralelo == secuencial bit a bit.
+% Teorema/propiedad + referencia al test parallel_decide.rs.
+
+\section{Verification and validation}
+\label{sec:vv}
+% TODO: (a) paridad distribucional vs Mesa (7/7 metricas, |z|<=1.22, curvas);
+% (b) RNG: PractRand sin anomalias 1GB en stream inter-agente; (c) determinismo
+% cross-platform x86-64 vs wasm32 bit-identico (tabla hex).
+
+\section{Performance and scalability}
+\label{sec:perf}
+% TODO: cross-engine SIR+Schelling vs Agents.jl y Mesa (tabla ms/paso, speedups);
+% metodologia (warmup JIT, build fuera del cronometro, mediana 3 seeds).
+% Escalabilidad del decide paralelo: compute-bound ~5.3x/16 hilos, memory-bound
+% ~1.6x; Amdahl (apply secuencial). Fig speedup.
+
+\section{Application: spatial debris-flow simulation}
+\label{sec:app}
+% TODO: port fiel de un modelo Mesa/Python (Atacama 2015), paridad distribucional,
+% ~100x. Enmarcar como reproduccion (citar manuscrito ESPL en revision, SIN las
+% mejoras). El aporte M&S: el rendimiento habilita (i) calibracion robusta
+% multi-semilla; (ii) benchmark de 5 metaheuristicas (DE/GA/PSO/SA/GWO) con
+% Friedman + Wilcoxon-Holm \cite{demsar2006statistical} = procedimiento de
+% seleccion/comparacion. Fig.
+
+\section{Accessibility and reproducibility}
+\label{sec:access}
+% TODO: bindings Python (PyO3) modelos nativos + barridos paralelos; visor WASM;
+% open source MIT/Apache; CI; deposito archivado (Zenodo DOI, TODO).
+
+\section{Discussion}
+\label{sec:discussion}
+% TODO: compute-no-es-neutral (decisiones cientificas habilitadas);
+% determinismo como requisito metodologico; generalidad espacial; comparacion
+% honesta con Agents.jl/Repast HPC \cite{collier2013repast}/FLAME GPU
+% \cite{richmond2023flamegpu}. Limitaciones: definir modelos requiere Rust
+% (mitigado por bindings); apply aun secuencial (techo de Amdahl).
+
+\section{Conclusions}
+\label{sec:conclusion}
+% TODO: motor determinista, multi-paradigma, de alto rendimiento, validado vs
+% Mesa y Agents.jl, con garantia de V&V para update sincrono y paralelismo
+% reproducible; demostrado en un caso real. Amplia el espacio de analisis tratables.
+
+\section*{Declaration of generative AI use}
+% TODO (obligatorio Elsevier si aplica).
+
+\bibliography{refs}
+
+\end{document}

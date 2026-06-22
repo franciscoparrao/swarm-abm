@@ -1,0 +1,7 @@
+Highlights (3–5 bullets, ≤ 85 caracteres c/u — archivo separado para Elsevier)
+
+- Spatial ABM engine in Rust: grid, network and continuous space under one API
+- Compiler-enforced synchronous update removes read-after-write by construction
+- Per-agent deterministic RNG: parallel results bit-identical to sequential
+- 2–5x faster than Agents.jl, 45–184x than Mesa; decide scales ~5x on 16 cores
+- Reproducible across x86-64 and WebAssembly; open source

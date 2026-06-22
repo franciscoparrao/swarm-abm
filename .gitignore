@@ -5,6 +5,17 @@ target/
 # WASM (paquete generado por wasm-pack)
 crates/swarm-wasm/www/pkg/
 
+# LaTeX build artifacts
+paper/tex/*.aux
+paper/tex/*.bbl
+paper/tex/*.blg
+paper/tex/*.log
+paper/tex/*.out
+paper/tex/*.pdf
+paper/tex/*.spl
+paper/tex/*.fdb_latexmk
+paper/tex/*.fls
+
 # Python / maturin
 .venv/
 __pycache__/
