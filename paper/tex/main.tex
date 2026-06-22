@@ -29,30 +29,29 @@ a multi-paradigm engine for spatial agent-based simulation}
             country={Country}}
 
 \begin{abstract}
-Reproducibility is foundational to computational science, yet agent-based
-modelling (ABM) --- a workhorse across ecology, epidemiology, the social
-sciences and the geosciences --- is typically practised on platforms (NetLogo,
-Mesa) that rely on global, unseeded randomness and offer no guarantee that a
-result can be reproduced bit-for-bit, across machines, or as parallelism is
-added. We present swarm-abm, a spatial ABM engine in Rust built
-around \emph{determinism by construction}. A single agent/model API spans three
-spatial paradigms (grid, network, continuous space) over a seedable, portable
-generator. The engine's central mechanism is a two-phase synchronous update
-whose decision phase receives the model immutably: the type system proves that
-no agent mutates shared state during decision, which simultaneously (i)
-eliminates the read-after-write hazard of synchronous ABM by construction ---
-a verification guarantee rather than a convention --- and (ii) makes the
-decision phase safe to parallelise. Paired with a per-agent generator keyed on
-$(\text{seed},\text{step},\text{agent})$, parallel execution is bit-for-bit
-identical to sequential, independent of thread count. We validate the generator
-with PractRand and confirm identical results across x86-64 and WebAssembly. On
-spatial SIR and Schelling, swarm-abm runs 2--5$\times$ faster single-threaded
-than Agents.jl --- the fastest compiled ABM framework --- and 45--184$\times$
-faster than Mesa; the parallel decision phase scales $\sim$5$\times$ on 16
-cores for compute-bound decisions. A debris-flow application shows this
-throughput turning an infeasible study --- a powered comparison of five
-metaheuristic calibrators --- into a routine one. Python bindings and a
-WebAssembly viewer are provided; the engine is open source.
+Reproducibility is foundational to computational science. Yet agent-based
+modelling (ABM), a workhorse across ecology, epidemiology, the social sciences
+and the geosciences, is typically practised on platforms (NetLogo, Mesa) that
+rely on global, unseeded randomness. Such platforms cannot guarantee that a
+result reproduces bit-for-bit, across machines, or as parallelism is added. We
+present swarm-abm, a spatial ABM engine in Rust built around \emph{determinism
+by construction}. A single agent/model API spans three spatial paradigms (grid,
+network, continuous space) over a seedable, portable generator. The engine's
+central mechanism is a two-phase synchronous update whose decision phase
+receives the model immutably. The type system therefore proves that no agent
+mutates shared state during decision. This removes the read-after-write hazard
+of synchronous ABM by construction, a verification guarantee rather than a
+convention, and makes the decision phase safe to parallelise. Paired with a
+per-agent generator keyed on $(\text{seed},\text{step},\text{agent})$, parallel
+execution is bit-for-bit identical to sequential, independent of thread count.
+We validate the generator with PractRand and confirm identical results across
+x86-64 and WebAssembly. On spatial SIR and Schelling, swarm-abm runs
+2--5$\times$ faster single-threaded than Agents.jl, the fastest compiled ABM
+framework, and 45--184$\times$ faster than Mesa. The parallel decision phase
+scales about fivefold on 16 cores for compute-bound decisions. A debris-flow
+application shows this throughput turning an infeasible study, a powered
+comparison of five metaheuristic calibrators, into a routine one. Python
+bindings and a WebAssembly viewer are provided; the engine is open source.
 \end{abstract}
 
 \begin{keyword}
@@ -72,7 +71,7 @@ out of local interactions among many heterogeneous agents, and is a standard
 method across ecology, epidemiology, the social sciences and the geosciences.
 Because an ABM is a stochastic computational experiment, its scientific value
 rests on \emph{reproducibility}: the same model, inputs and seed should yield
-the same result --- on any machine, and whether it runs on one thread or many.
+the same result, on any machine, and whether it runs on one thread or many.
 Yet the two platforms that dominate practice fall short of this bar. NetLogo
 \cite{wilensky1999netlogo}, on the Java virtual machine, and Mesa
 \cite{kazil2020mesa}, in Python, both lean on a global, unseeded random source
@@ -124,13 +123,13 @@ reproducibility. Concretely, our contributions are:
   and WebAssembly (Section~\ref{sec:vv}).
   \item A \textbf{performance evaluation against the real peers}: on spatial SIR
   and Schelling, swarm-abm is 2--5$\times$ faster single-threaded than
-  Agents.jl \cite{datseris2022agents} --- the fastest compiled ABM framework
-  --- and 45--184$\times$ faster than Mesa; the parallel decision phase scales
+  Agents.jl \cite{datseris2022agents}, the fastest compiled ABM framework,
+  and 45--184$\times$ faster than Mesa; the parallel decision phase scales
   $\sim$5$\times$ on 16 cores when per-agent decisions are compute-bound
   (Section~\ref{sec:perf}).
   \item A \textbf{real-world demonstration} in which the engine's throughput
-  turns a previously infeasible study --- a statistically powered comparison of
-  five metaheuristic calibrators --- into a routine one
+  turns a previously infeasible study (a statistically powered comparison of
+  five metaheuristic calibrators) into a routine one
   (Section~\ref{sec:app}), plus Python bindings and a WebAssembly viewer
   (Section~\ref{sec:access}).
 \end{itemize}
@@ -154,7 +153,7 @@ the engine drives them through a fixed per-step protocol (environment update,
 agent activation in scheduler order, post-step bookkeeping, data collection).
 The central design problem is that an agent's behaviour needs mutable access to
 itself \emph{and} read/write access to the rest of the model (including other
-agents) at the same time --- a borrow conflict in a language with compile-time
+agents) at the same time, a borrow conflict in a language with compile-time
 aliasing rules. swarm-abm resolves this with a \emph{take-out} pattern: while an
 agent runs, it is temporarily removed from the model's agent set, so it can be
 handed full mutable access to the model with no aliasing, and is returned
@@ -174,7 +173,7 @@ only the spatial queries change.
 
 \subsection{Scheduling}
 Activation policy is explicit: \texttt{Ordered} (insertion order),
-\texttt{Random} (a fresh seeded permutation each step --- the ABM default for
+\texttt{Random} (a fresh seeded permutation each step, the ABM default for
 avoiding order artefacts), or \texttt{Simultaneous} (the two-phase synchronous
 update of Section~\ref{sec:sync}). A model written in the two-phase style also
 runs under sequential policies, so the same code can be exercised both ways.
@@ -188,7 +187,7 @@ scalar series for later export. Determinism is thus a property of the engine,
 not of user discipline.
 
 \subsection{Batch execution}
-Replicates and parameter sweeps --- the bread and butter of an ABM study --- are
+Replicates and parameter sweeps, the bread and butter of an ABM study, are
 first-class: \texttt{run\_ensemble} and \texttt{run\_sweep} evaluate a model
 over many seeds and configurations and reduce each run to a summary. With the
 \texttt{parallel} feature these distribute across cores via a work-stealing
@@ -205,7 +204,7 @@ In synchronous (simultaneous) update, time advances in two phases. In the
 state. The defining requirement is that all agents decide against one
 consistent snapshot. If, during decision, an agent reads a neighbour that has
 already written its \emph{next} state, the snapshot is no longer consistent and
-the update is silently wrong --- a classic and easily-introduced verification
+the update is silently wrong, a classic and easily introduced verification
 defect. In NetLogo, Mesa, Repast and Agents.jl this correctness condition is
 maintained by user discipline (writing to a separate ``next'' field, or reading
 from a hand-built snapshot); nothing in the tooling prevents a violation.
@@ -220,11 +219,11 @@ Because \texttt{model} is immutable, the compiler \emph{proves} that no agent
 can write shared state during the decision phase; an attempt to do so does not
 compile. Read-after-write is therefore impossible by construction, not by
 convention. Cross-agent reads, when a model needs them, go through an immutable
-snapshot the model publishes before the phase --- the same double-buffering
+snapshot the model publishes before the phase, the same double-buffering
 discipline that ABM correctness requires, now enforced rather than trusted. The
 classic test case is Conway's Game of Life: under simultaneous activation a
 blinker oscillates correctly, whereas the same model under sequential
-activation does not --- the engine ships this as a regression test.
+activation does not; the engine ships this as a regression test.
 
 \subsection{From guarantee to deterministic parallelism}
 The immutability that guarantees correctness is exactly the property that makes
@@ -238,7 +237,7 @@ the parallel result \emph{bit-for-bit identical} to the sequential one:
   \item Each agent draws from a \emph{per-agent} generator seeded
   deterministically from $(\text{seed},\text{step},\text{agent id})$ via a
   splitmix64 mixing of the three keys. An agent's randomness thus depends only
-  on its identity and the step number --- never on which thread runs it or in
+  on its identity and the step number, never on which thread runs it or in
   what order.
   \item The apply phase remains sequential and commits in insertion order, so
   collision resolution is deterministic.
@@ -270,15 +269,15 @@ derivation introduces correlation \emph{between} neighbouring agents' streams,
 which would corrupt parallel ABM. We dumped two streams and tested them with
 PractRand 0.95: (a) a single \texttt{SimRng} stream (control), and (b) the
 \emph{inter-agent} stream formed by the first draw of each agent's per-agent
-generator, cycling over agents and steps --- the stream the parallel decision
+generator, cycling over agents and steps: the stream the parallel decision
 phase actually exercises. The control passes with no anomalies to 256~MB; the
 inter-agent stream passes with no anomalies through 1~GB (246 test results).
 The per-agent seeding therefore yields independent, well-distributed streams.
 
 \subsection{Cross-platform bit-identity}
 Reproducibility should survive a change of architecture. We compiled the same
-model code to two targets --- native x86-64 (through the Python bindings) and
-wasm32 (through Node.js) --- and compared the exact IEEE-754 bits of
+model code to two targets, native x86-64 (through the Python bindings) and
+wasm32 (through Node.js), and compared the exact IEEE-754 bits of
 configuration-sensitive metrics under a common seed (Table~\ref{tab:crossplat}).
 Every value is bit-identical, including Schelling's mean neighbourhood
 similarity (which depends on the exact spatial configuration) and the Gini
@@ -321,8 +320,8 @@ two engines reach end-of-epidemic at different steps under different
 generators, we report \emph{milliseconds per step}; model construction is
 excluded from timing in all engines; for the Julia engine we warm up the JIT
 before measuring (so compilation is never timed); each cell is the median of
-three seeds. The comparators are Agents.jl 7.0.2 (Julia 1.10) --- the fastest
-compiled ABM framework --- and Mesa 3.5 (CPython 3.12). NetLogo, Repast HPC
+three seeds. The comparators are Agents.jl 7.0.2 (Julia 1.10), the fastest
+compiled ABM framework, and Mesa 3.5 (CPython 3.12). NetLogo, Repast HPC
 \cite{collier2013repast} and FLAME GPU \cite{richmond2023flamegpu} are discussed
 as related work; the last two target distributed and GPU execution beyond a
 single CPU node.
@@ -332,8 +331,8 @@ Figure~\ref{fig:perf} reports per-step cost on spatial SIR and Schelling.
 swarm-abm is 2--5$\times$ faster than Agents.jl and 45--184$\times$ faster than
 Mesa across two distinct access patterns (in-place contagion versus mobility
 with vacancies). As a sanity check that the Agents.jl mirrors are idiomatic and
-fair, Agents.jl itself is 10--48$\times$ faster than Mesa --- squarely in its
-expected range --- so the margin over Agents.jl is not an artefact of a
+fair, Agents.jl itself is 10--48$\times$ faster than Mesa, squarely in its
+expected range, so the margin over Agents.jl is not an artefact of a
 hobbled comparator. (The 184$\times$ figure over Mesa on large Schelling partly
 reflects Mesa's $O(n)$ handling of empty cells, not raw compute alone.)
 
@@ -358,12 +357,12 @@ engine's intra-step parallelism. Its benefit depends on whether per-agent
 decisions are compute- or memory-bound, which we separate with a Game-of-Life
 bench (250\,000 agents, 30 steps, median of 3 replicates) carrying a tunable
 per-agent decision cost (Figure~\ref{fig:scaling}). When decisions are
-compute-bound --- the regime of agents with expensive logic (utility
-maximisation, perception, local optimisation), common in economic and social
-ABM --- the phase scales to $5.3\times$ on 16 threads. When they are
+compute-bound (the regime of agents with expensive logic such as utility
+maximisation, perception or local optimisation, common in economic and social
+ABM), the phase scales to $5.3\times$ on 16 threads. When they are
 memory-bound (plain Life, a stencil), the speedup is a modest $1.6\times$:
 bandwidth, not cores, is the limit, as expected for stencil computations.
-Amdahl's law sets the ceiling --- the apply phase is sequential --- which is a
+Amdahl's law sets the ceiling (the apply phase is sequential), which is a
 natural target for future work.
 
 \begin{figure}[t]
@@ -378,8 +377,8 @@ saturate at $1.6\times$ as memory bandwidth, not cores, becomes the limit.}
 \end{figure}
 
 Combined with the single-thread advantage over Agents.jl, the parallel decision
-phase widens the gap precisely in the regime --- expensive per-agent decisions
---- where intra-step parallelism pays.
+phase widens the gap precisely where intra-step parallelism pays, namely
+expensive per-agent decisions.
 
 \section{Application: spatial debris-flow simulation}
 \label{sec:app}
@@ -390,7 +389,7 @@ event, Chile) on swarm-abm, faithfully porting a Mesa/Python original
 \cite{debrisflow2026}. The port reproduces the original distributionally on
 identical inputs while running about $100\times$ faster (from $130$--$240$~s to
 $1.2$--$4$~s per run on a $31.8$-million-cell domain). It also recovers
-reproducibility the original lacked --- the original drew from an unseeded
+reproducibility the original lacked: the original drew from an unseeded
 global generator, so its runs could not be replicated.
 
 The point of the application is not the geomorphology but what the engine's
@@ -407,8 +406,8 @@ the original become routine:
   full calibration is now minutes, we compare five metaheuristics
   (Differential Evolution, a genetic algorithm, particle-swarm, simulated
   annealing, and Grey Wolf Optimisation \cite{mirjalili2014grey}) with
-  statistical power --- $5\times10$ runs, $7\,500$ simulations in $\sim$12~min
-  (versus $\sim$80~h in Python) --- using a Friedman test
+  statistical power ($5\times10$ runs, $7\,500$ simulations in $\sim$12~min,
+  versus $\sim$80~h in Python), using a Friedman test
   ($\chi^2 = 14.3$, $p = 0.006$) and Wilcoxon--Holm post-hoc comparisons
   \cite{demsar2006statistical}. Grey Wolf Optimisation wins and leads
   out-of-sample. This is exactly the kind of rigorous comparison the cost of an
@@ -416,7 +415,7 @@ the original become routine:
 \end{itemize}
 The application thus illustrates the paper's thesis concretely: lowering the
 cost per run by two orders of magnitude does not merely speed up an existing
-study --- it changes which studies, and which conclusions, are reachable.
+study: it changes which studies, and which conclusions, are reachable.
 
 \section{Accessibility and reproducibility}
 \label{sec:access}
@@ -440,7 +439,7 @@ be archived with a citable DOI. % TODO: Zenodo DOI on release
 The application makes concrete a claim that is easy to state and easy to ignore:
 the cost of a simulation is not a neutral implementation detail but a constraint
 on the science. We showed two cases where lowering it changed the conclusion,
-not just the runtime --- a robust calibration that overturns a single-seed
+not just the runtime: a robust calibration that overturns a single-seed
 over-fit, and a statistically powered optimiser comparison that an interpreted
 engine could not afford. Performance, here, is a methodological enabler, which
 is why we frame it as a pillar rather than the headline.
@@ -454,8 +453,8 @@ synchronous update is the kernel that makes the parallel case hold, turning a
 correctness proof into a reproducibility guarantee.
 
 \paragraph{Relation to other engines.}
-swarm-abm occupies the same niche as Agents.jl --- a fast, single-machine,
-general ABM framework --- and is faster on our benchmarks while adding
+swarm-abm occupies the same niche as Agents.jl, a fast, single-machine,
+general ABM framework, and is faster on our benchmarks while adding
 deterministic parallelism and a WebAssembly target. It is complementary to
 distributed and GPU engines: Repast HPC \cite{collier2013repast} targets
 clusters and FLAME GPU \cite{richmond2023flamegpu} targets the GPU, regimes we
@@ -478,7 +477,7 @@ We presented swarm-abm, a spatial agent-based simulation engine organised around
 determinism by construction. Its kernel is a type-enforced immutability that
 simultaneously proves the synchronous update correct and makes it safe to
 parallelise, yielding parallel execution that is bit-for-bit identical to
-sequential and reproducible across machines --- properties we validated with
+sequential and reproducible across machines, properties we validated with
 PractRand and across x86-64 and WebAssembly. The engine is fast where it matters,
 2--5$\times$ over Agents.jl and 45--184$\times$ over Mesa on canonical models,
 with intra-step parallelism that scales $\sim$5$\times$ on 16 cores for
