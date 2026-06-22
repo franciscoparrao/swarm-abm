@@ -33,8 +33,8 @@ Reproducibility is foundational to computational science, yet agent-based
 modelling (ABM) --- a workhorse across ecology, epidemiology, the social
 sciences and the geosciences --- is typically practised on platforms (NetLogo,
 Mesa) that rely on global, unseeded randomness and offer no guarantee that a
-result can be reproduced bit-for-bit, let alone across machines or as
-parallelism is added. We present swarm-abm, a spatial ABM engine in Rust built
+result can be reproduced bit-for-bit, across machines, or as parallelism is
+added. We present swarm-abm, a spatial ABM engine in Rust built
 around \emph{determinism by construction}. A single agent/model API spans three
 spatial paradigms (grid, network, continuous space) over a seedable, portable
 generator. The engine's central mechanism is a two-phase synchronous update
@@ -49,9 +49,9 @@ with PractRand and confirm identical results across x86-64 and WebAssembly. On
 spatial SIR and Schelling, swarm-abm runs 2--5$\times$ faster single-threaded
 than Agents.jl --- the fastest compiled ABM framework --- and 45--184$\times$
 faster than Mesa; the parallel decision phase scales $\sim$5$\times$ on 16
-cores for compute-bound decisions. A real debris-flow application shows how this
-throughput turns an infeasible study --- a statistically powered comparison of
-five metaheuristic calibrators --- into a routine one. Python bindings and a
+cores for compute-bound decisions. A debris-flow application shows this
+throughput turning an infeasible study --- a powered comparison of five
+metaheuristic calibrators --- into a routine one. Python bindings and a
 WebAssembly viewer are provided; the engine is open source.
 \end{abstract}
 
@@ -254,7 +254,8 @@ combination the reference tools do not provide.
 
 \subsection{Distributional parity with Mesa}
 To verify that swarm-abm reproduces accepted ABM dynamics, we wrote exact
-mirrors of Schelling segregation and spatial SIR in Mesa and compared the two
+mirrors of Schelling segregation \cite{schelling1971segregation} and spatial
+SIR in Mesa and compared the two
 engines distributionally: 50 replicates per engine, a two-sample $z$-test per
 summary metric ($\alpha = 0.05$), and a comparison of ensemble-mean
 trajectories. All seven metrics are in parity ($|z| \le 1.22$) and the
@@ -280,8 +281,8 @@ model code to two targets --- native x86-64 (through the Python bindings) and
 wasm32 (through Node.js) --- and compared the exact IEEE-754 bits of
 configuration-sensitive metrics under a common seed (Table~\ref{tab:crossplat}).
 Every value is bit-identical, including Schelling's mean neighbourhood
-similarity (which depends on the exact spatial configuration) and Sugarscape's
-Gini coefficient. Identity holds despite the change in pointer width
+similarity (which depends on the exact spatial configuration) and the Gini
+coefficient of a Sugarscape model \cite{epstein1996growing}. Identity holds despite the change in pointer width
 (64-bit \texttt{usize} natively versus 32-bit on wasm32): the engine avoids the
 width-dependent generator pitfalls that would otherwise break portability.
 
