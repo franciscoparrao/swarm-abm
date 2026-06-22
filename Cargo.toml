@@ -17,7 +17,7 @@ members = [
 # swarm-py (bindings PyO3) se construye con maturin, no con cargo --workspace:
 # la feature extension-module de pyo3 no enlaza libpython, así que se queda
 # fuera del grafo del workspace para no perturbar `cargo build/clippy --workspace`.
-exclude = ["crates/swarm-py", "crates/swarm-wasm"]
+exclude = ["crates/swarm-py", "crates/swarm-wasm", "validation/krabmaga-bench"]
 
 [workspace.package]
 version = "0.3.0"

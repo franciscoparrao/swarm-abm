@@ -1,0 +1,12 @@
+[package]
+name = "krabmaga-bench"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+[dependencies]
+krabmaga = "0.6"
+
+[profile.release]
+opt-level = 3
+lto = true
