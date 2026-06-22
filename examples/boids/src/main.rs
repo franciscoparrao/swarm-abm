@@ -130,11 +130,38 @@ fn build(n: usize, size: f64, seed: u64) -> Flock {
     }
 }
 
+/// Valor de un flag `--nombre valor`, si está presente.
+fn arg_value<T: std::str::FromStr>(args: &[String], name: &str) -> Option<T> {
+    args.iter()
+        .position(|a| a == name)
+        .and_then(|i| args.get(i + 1))
+        .and_then(|v| v.parse().ok())
+}
+
 fn main() {
-    let seed: u64 = std::env::args()
-        .nth(1)
+    let args: Vec<String> = std::env::args().collect();
+    let seed: u64 = args
+        .get(1)
+        .filter(|a| !a.starts_with("--"))
         .and_then(|s| s.parse().ok())
         .unwrap_or(42);
+
+    // Modo benchmark: throughput (agente-pasos/s) del espacio CONTINUO. Mide
+    // solo el stepping; densidad fija (área escala con n).
+    if args.iter().any(|a| a == "--bench") {
+        let n: usize = arg_value(&args, "--agents").unwrap_or(20_000);
+        let steps: u64 = arg_value(&args, "--steps").unwrap_or(200);
+        let size = (n as f64 / 0.06).sqrt(); // densidad ~0.06 agentes/celda²
+        let mut sim = Simulation::new(build(n, size, seed), seed)
+            .with_schedule(Schedule::new(Activation::Ordered));
+        let t0 = std::time::Instant::now();
+        let ran = sim.run(steps);
+        let ms = t0.elapsed().as_secs_f64() * 1000.0;
+        let aps = n as f64 * ran as f64 / (ms / 1000.0);
+        println!("agents,steps,ms,agent_steps_per_s\n{n},{ran},{ms:.3},{aps:.0}");
+        return;
+    }
+
     let (n, size, steps) = (800usize, 120.0, 400u64);
 
     let mut sim = Simulation::new(build(n, size, seed), seed)

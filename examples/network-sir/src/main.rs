@@ -159,11 +159,38 @@ fn run_topology(name: &str, net: Graph<()>, seed: u64) {
     );
 }
 
+/// Valor de un flag `--nombre valor`, si está presente.
+fn arg_value<T: std::str::FromStr>(args: &[String], name: &str) -> Option<T> {
+    args.iter()
+        .position(|a| a == name)
+        .and_then(|i| args.get(i + 1))
+        .and_then(|v| v.parse().ok())
+}
+
 fn main() {
-    let seed: u64 = std::env::args()
-        .nth(1)
+    let args: Vec<String> = std::env::args().collect();
+    let seed: u64 = args
+        .get(1)
+        .filter(|a| !a.starts_with("--"))
         .and_then(|s| s.parse().ok())
         .unwrap_or(42);
+
+    // Modo benchmark: throughput (agente-pasos/s) del espacio de GRAFO. Mide
+    // solo el stepping (construcción fuera del cronómetro).
+    if args.iter().any(|a| a == "--bench") {
+        let nodes: usize = arg_value(&args, "--nodes").unwrap_or(50_000);
+        let steps: u64 = arg_value(&args, "--steps").unwrap_or(200);
+        let net = Graph::watts_strogatz(nodes, 4, 0.1, &mut rng_from_seed(seed));
+        let mut sim = Simulation::new(build(net, 5, seed), seed)
+            .with_schedule(Schedule::new(Activation::Random));
+        let t0 = std::time::Instant::now();
+        let ran = sim.run(steps);
+        let ms = t0.elapsed().as_secs_f64() * 1000.0;
+        let aps = nodes as f64 * ran as f64 / (ms / 1000.0);
+        println!("nodes,steps,ms,agent_steps_per_s\n{nodes},{ran},{ms:.3},{aps:.0}");
+        return;
+    }
+
     let (n, k) = (4000usize, 4);
 
     println!(
