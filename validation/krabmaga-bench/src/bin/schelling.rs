@@ -18,7 +18,6 @@ use krabmaga::engine::schedule::{Schedule, ScheduleOptions};
 use krabmaga::engine::state::State;
 use krabmaga::rand;
 use krabmaga::rand::seq::SliceRandom;
-use krabmaga::rand::Rng;
 use std::any::Any;
 use std::fmt;
 use std::hash::{Hash, Hasher};
