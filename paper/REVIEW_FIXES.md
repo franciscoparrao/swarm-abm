@@ -9,17 +9,20 @@
 | # | Dim | Sev | Issue | Acción | Esfuerzo | Estado |
 |---|-----|-----|-------|--------|----------|--------|
 | 1 | D7 | 🔴 | Falta krABMaga (competidor Rust directo) | Citar + posicionar (y ver benchmark) | M–L | ☐ |
-| 2 | D3 | 🔴 | "Parity" desde test no significativo (falacia de equivalencia) | Reencuadrar a "no detectable difference" + bound de efecto, o TOST | S | ☐ |
-| 3 | D4 | 🔴 | "By construction" mezcla garantizado (hilos) vs empírico (plataformas) | Separar explícito en abstract/§4.3/discusión | S | ☐ |
-| 4 | D1 | 🟡 | "the fastest compiled ABM framework" (superlativo) | "one of the fastest" / "state-of-the-art" | S | ☐ |
-| 5 | D2/D4 | 🟡 | Speedup generaliza desde n=2 modelos de grilla | Acotar a "on these benchmarks" + limitación | S | ☐ |
-| 6 | D2 | 🟡 | "for any model and thread count" universal, 1 modelo testeado | Calificar: "any model under the parallel API" + empírico | S | ☐ |
-| 7 | D4 | 🟡 | CPU híbrida (4P+8E) no revelada | Declarar arquitectura en §5.1 | S | ☐ |
-| 8 | D4 | 🟡 | Escalabilidad usa carga sintética (`--work`) | Decir explícito que es proxy del régimen compute-bound | S | ☐ |
-| 9 | D3 | 🟢 | "~400×" de un rango ancho (~130–2000×) | Dar el rango o marcar "approximate" | S | ☐ |
-| 10 | D4 | 🟢 | "GWO leads out-of-sample" sin mostrarlo | Mostrar dato o suavizar | S | ☐ |
-| 11 | D5 | 🟢 | No preempta "double-buffering ya resuelve esto" | Una frase directa en §3 | S | ☐ |
+| 2 | D3 | 🔴 | "Parity" desde test no significativo (falacia de equivalencia) | Reencuadrado: lidera el bound de efecto; el z-test es "no detectable difference" | S | ☑ |
+| 3 | D4 | 🔴 | "By construction" mezcla garantizado (hilos) vs empírico (plataformas) | §4.3: cross-platform marcado como empírico, distinto del caso hilos | S | ☑ |
+| 4 | D1 | 🟡 | "the fastest compiled ABM framework" (superlativo) | → "one of the fastest compiled ABM frameworks" (3×) | S | ☑ |
+| 5 | D2/D4 | 🟡 | Speedup generaliza desde n=2 modelos de grilla | Limitación añadida (§8): solo grilla benchmarkeada | S | ☑ |
+| 6 | D2 | 🟡 | "for any model and thread count" universal, 1 modelo testeado | §3.3: "any model under the parallel API" + verificado empírico | S | ☑ |
+| 7 | D4 | 🟡 | CPU híbrida (4P+8E) no revelada | §5.1 + §5.3: declarada + nota sobre la curva | S | ☑ |
+| 8 | D4 | 🟡 | Escalabilidad usa carga sintética (`--work`) | §5.3: marcada como "synthetic proxy" | S | ☑ |
+| 9 | D3 | 🟢 | "~400×" de un rango ancho (~130–2000×) | §6: → "two to three orders of magnitude" | S | ☑ |
+| 10 | D4 | 🟢 | "GWO leads out-of-sample" sin mostrarlo | §6: → "ranks first and performs competitively out of sample" | S | ☑ |
+| 11 | D5 | 🟢 | No preempta "double-buffering ya resuelve esto" | §3.2: frase directa añadida | S | ☑ |
 | 12 | D6 | 🟢 | Placeholders: autor/afiliación, DOI Zenodo, decl. IA | Llenar al cierre | S | ☐ |
+
+> **Estado (2026-06-22):** bloque de edición #2–#11 APLICADO (compila, 16 pp).
+> Pendiente: #1 (krABMaga) y #12 (placeholders).
 
 Esfuerzo: S = minutos (edición), M = horas, L = día+ (experimento/código).
 

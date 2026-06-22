@@ -123,7 +123,7 @@ reproducibility. Concretely, our contributions are:
   and WebAssembly (Section~\ref{sec:vv}).
   \item A \textbf{performance evaluation against the real peers}: on spatial SIR
   and Schelling, swarm-abm is 2--5$\times$ faster single-threaded than
-  Agents.jl \cite{datseris2022agents}, the fastest compiled ABM framework,
+  Agents.jl \cite{datseris2022agents}, one of the fastest compiled ABM frameworks,
   and 45--184$\times$ faster than Mesa; the parallel decision phase scales
   $\sim$5$\times$ on 16 cores when per-agent decisions are compute-bound
   (Section~\ref{sec:perf}).
@@ -221,6 +221,9 @@ compile. Read-after-write is therefore impossible by construction, not by
 convention. Cross-agent reads, when a model needs them, go through an immutable
 snapshot the model publishes before the phase, the same double-buffering
 discipline that ABM correctness requires, now enforced rather than trusted. The
+remedy itself (double-buffering) is well known; what is new is that the type
+system makes it mandatory rather than advisory, which is also what licenses the
+safe parallelism of Section~\ref{sec:sync} below. The
 classic test case is Conway's Game of Life: under simultaneous activation a
 blinker oscillates correctly, whereas the same model under sequential
 activation does not; the engine ships this as a regression test.
@@ -242,9 +245,11 @@ the parallel result \emph{bit-for-bit identical} to the sequential one:
   \item The apply phase remains sequential and commits in insertion order, so
   collision resolution is deterministic.
 \end{enumerate}
-The resulting property is stated plainly: for any model and thread count, the
-parallel run produces the same state, bit-for-bit, as the sequential run. We
-verify it directly (Section~\ref{sec:vv}). This is the payoff of the framing:
+The resulting property is stated plainly: for any model expressible under the
+parallel API, whose snapshot contract the type system enforces, and for any
+thread count, the parallel run produces the same state, bit-for-bit, as the
+sequential run. We verify it empirically on a stochastic model
+(Section~\ref{sec:vv}). This is the payoff of the framing:
 the same proof that buys correctness buys reproducible parallelism, a
 combination the reference tools do not provide.
 
@@ -254,13 +259,16 @@ combination the reference tools do not provide.
 \subsection{Distributional parity with Mesa}
 To verify that swarm-abm reproduces accepted ABM dynamics, we wrote exact
 mirrors of Schelling segregation \cite{schelling1971segregation} and spatial
-SIR in Mesa and compared the two
-engines distributionally: 50 replicates per engine, a two-sample $z$-test per
-summary metric ($\alpha = 0.05$), and a comparison of ensemble-mean
-trajectories. All seven metrics are in parity ($|z| \le 1.22$) and the
-ensemble-mean curves differ by less than $0.021$ over the whole horizon.
-Independently, the \texttt{diffuse} operator converges to its analytic
-fixed point, validating the spatial update separately from the generator.
+SIR in Mesa and compared the two engines distributionally over 50 replicates
+per engine. The primary evidence is an effect-size bound: the ensemble-mean
+trajectories of the two engines differ by less than $0.021$ across the whole
+horizon, for every metric. Consistently, a two-sample $z$-test per summary
+metric ($\alpha = 0.05$) finds no statistically detectable difference on any of
+the seven metrics ($|z| \le 1.22$); we read the test as corroborating the small
+effect-size bound, not as proof of equivalence in itself (a non-significant
+test does not establish equality). Independently, the \texttt{diffuse}
+operator converges to its analytic fixed point, validating the spatial update
+separately from the generator.
 
 \subsection{Generator quality}
 ChaCha8 is a cryptographic-grade stream and its statistical quality is
@@ -281,9 +289,13 @@ wasm32 (through Node.js), and compared the exact IEEE-754 bits of
 configuration-sensitive metrics under a common seed (Table~\ref{tab:crossplat}).
 Every value is bit-identical, including Schelling's mean neighbourhood
 similarity (which depends on the exact spatial configuration) and the Gini
-coefficient of a Sugarscape model \cite{epstein1996growing}. Identity holds despite the change in pointer width
-(64-bit \texttt{usize} natively versus 32-bit on wasm32): the engine avoids the
-width-dependent generator pitfalls that would otherwise break portability.
+coefficient of a Sugarscape model \cite{epstein1996growing}. Identity holds
+despite the change in pointer width (64-bit \texttt{usize} natively versus
+32-bit on wasm32). We stress that this cross-platform identity is an
+\emph{empirical} result, not a construction-level guarantee like the
+thread-count case of Section~\ref{sec:sync}: a model that sampled from ranges
+wider than $2^{32}$ in a width-dependent way could in principle diverge, so
+cross-platform bit-identity should be verified per model rather than assumed.
 
 \begin{table}[t]
 \centering
@@ -315,7 +327,9 @@ standing regression test in the engine's suite.
 
 \subsection{Methodology}
 We benchmark against the reference platforms on identical models, the same
-machine (a 16-thread Intel i7-1270P), and a like-for-like protocol. Because the
+machine, and a like-for-like protocol. The machine is an Intel i7-1270P, a
+hybrid design with 4 performance and 8 efficiency cores (12 cores, 16 threads);
+we note the heterogeneity because it bears on the scaling results below. Because the
 two engines reach end-of-epidemic at different steps under different
 generators, we report \emph{milliseconds per step}; model construction is
 excluded from timing in all engines; for the Julia engine we warm up the JIT
@@ -355,15 +369,19 @@ margins reflect a genuinely fast core rather than a favourable model size.
 The deterministic parallel decision phase (Section~\ref{sec:sync}) is the
 engine's intra-step parallelism. Its benefit depends on whether per-agent
 decisions are compute- or memory-bound, which we separate with a Game-of-Life
-bench (250\,000 agents, 30 steps, median of 3 replicates) carrying a tunable
-per-agent decision cost (Figure~\ref{fig:scaling}). When decisions are
+bench (250\,000 agents, 30 steps, median of 3 replicates) carrying a tunable,
+\emph{synthetic} per-agent decision cost that stands in for the decision logic
+of more elaborate agents (Figure~\ref{fig:scaling}). When decisions are
 compute-bound (the regime of agents with expensive logic such as utility
 maximisation, perception or local optimisation, common in economic and social
 ABM), the phase scales to $5.3\times$ on 16 threads. When they are
 memory-bound (plain Life, a stencil), the speedup is a modest $1.6\times$:
 bandwidth, not cores, is the limit, as expected for stencil computations.
 Amdahl's law sets the ceiling (the apply phase is sequential), which is a
-natural target for future work.
+natural target for future work. The hybrid core layout also matters: beyond
+eight threads the slower efficiency cores are engaged, so the curve reflects
+core heterogeneity as well as Amdahl's law, and should not be read as a clean
+strong-scaling result on homogeneous cores.
 
 \begin{figure}[t]
 \centering
@@ -399,7 +417,8 @@ the original become routine:
   \item \textbf{Robust calibration.} Differential Evolution
   \cite{storn1997differential} over the ported model, parallelised across cores,
   fits the model in $1$--$5$~min where the Python equivalent would take
-  $11$--$34$~h ($\sim$$400\times$). Crucially, the cheap runs let us calibrate
+  $11$--$34$~h, two to three orders of magnitude faster. Crucially, the cheap
+  runs let us calibrate
   against a multi-seed objective and so detect and correct an over-fit to a
   single seed that single-run calibration hides.
   \item \textbf{A selection-and-comparison procedure for calibrators.} Because a
@@ -409,9 +428,9 @@ the original become routine:
   statistical power ($5\times10$ runs, $7\,500$ simulations in $\sim$12~min,
   versus $\sim$80~h in Python), using a Friedman test
   ($\chi^2 = 14.3$, $p = 0.006$) and Wilcoxon--Holm post-hoc comparisons
-  \cite{demsar2006statistical}. Grey Wolf Optimisation wins and leads
-  out-of-sample. This is exactly the kind of rigorous comparison the cost of an
-  interpreted engine ordinarily precludes.
+  \cite{demsar2006statistical}. Grey Wolf Optimisation ranks first and performs
+  competitively out of sample. This is exactly the kind of rigorous comparison
+  the cost of an interpreted engine ordinarily precludes.
 \end{itemize}
 The application thus illustrates the paper's thesis concretely: lowering the
 cost per run by two orders of magnitude does not merely speed up an existing
@@ -468,7 +487,11 @@ not for those who author new ones. The deterministic-parallelism guarantee
 applies to the synchronous decision phase; the apply phase is still sequential,
 which both bounds parallel speedup (Amdahl) and is the obvious next target,
 since in many models the apply phase writes to disjoint locations and could be
-parallelised under a similar disjointness guarantee.
+parallelised under a similar disjointness guarantee. Finally, our performance
+evaluation covers two grid-based models (SIR and Schelling); the graph and
+continuous-space paradigms, though supported by the same API, are not
+benchmarked here, so the cross-engine margins should not be assumed to transfer
+unchanged to those settings.
 
 \section{Conclusions}
 \label{sec:conclusion}
