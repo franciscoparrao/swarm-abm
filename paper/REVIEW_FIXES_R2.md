@@ -10,7 +10,7 @@
 | # | Sev | Issue | Acción | Tipo | Esfuerzo | Estado |
 |---|-----|-------|--------|------|----------|--------|
 | C1 | 🔴 | Sin contexto de la literatura PADS sobre determinismo/reproducibilidad en simulación paralela | §3.3: situado como *repeatability* de PADS (Fujimoto 1990/2000), novedad re-acotada al MECANISMO (por tipos, no por protocolo) | escritura+lit | M | ☑ |
-| C2 | 🔴 | Historia HPC débil; krABMaga más rápido + distribuido | (a) trade-off defendido en Discusión (reproducibilidad como requisito, vale el costo); (b) paralelizar `apply` PENDIENTE (opcional) | escritura / ingeniería | S / L | ◑ (a hecho, b pend.) |
+| C2 | 🔴 | Historia HPC débil; krABMaga más rápido + distribuido | (a) trade-off defendido; (b) `apply` paralelo EXPLORADO y descartado: conflicto de semántica (apply paralelizable = solo-self → pierde las escrituras inmediatas que dan sentido a la activación síncrona; y apply es fracción chica en compute-bound). Paper §5.3/§8 corregidos al hallazgo | escritura / ingeniería | S / L | ☑ (a hecho; b explorado→no) |
 | C3 | 🟠 | "Compiler-verified" se lee como feature de Rust, no aporte de M&S general | Discusión: principio agnóstico al lenguaje (const-correctness/ownership/capabilities); "the contribution is the principle, not the language" | escritura | S | ☑ |
 | S1 | 🟡 | La garantía es más angosta de lo enunciado (el snapshot lo construye el autor) | §3.2: scope explícito — el compilador impide escribir el modelo, no certifica el snapshot | escritura | S | ☑ |
 | S2 | 🟡 | Benchmarks con solo 3 réplicas, sin IC (vs 50 en la paridad) | Re-correr con N réplicas + reportar IC/IQR | experimento | M | ☐ |

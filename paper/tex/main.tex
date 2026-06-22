@@ -403,8 +403,10 @@ maximisation, perception or local optimisation, common in economic and social
 ABM), the phase scales to $5.3\times$ on 16 threads. When they are
 memory-bound (plain Life, a stencil), the speedup is a modest $1.6\times$:
 bandwidth, not cores, is the limit, as expected for stencil computations.
-Amdahl's law sets the ceiling (the apply phase is sequential), which is a
-natural target for future work. The hybrid core layout also matters: beyond
+Amdahl's law sets the ceiling: the apply phase is sequential. We measured its
+cost and found it a small fraction of the step in the compute-bound regime where
+parallelism pays most, so it does not bind the headline speedup there (it is more
+visible for cheap, memory-bound decisions). The hybrid core layout also matters: beyond
 eight threads the slower efficiency cores are engaged, so the curve reflects
 core heterogeneity as well as Amdahl's law, and should not be read as a clean
 strong-scaling result on homogeneous cores.
@@ -532,10 +534,14 @@ protocol \cite{grimm2006odd} is orthogonal and compatible.
 Defining a new model requires writing Rust, a higher barrier than NetLogo's or
 Mesa's; the Python bindings mitigate this for users who run existing models but
 not for those who author new ones. The deterministic-parallelism guarantee
-applies to the synchronous decision phase; the apply phase is still sequential,
-which both bounds parallel speedup (Amdahl) and is the obvious next target,
-since in many models the apply phase writes to disjoint locations and could be
-parallelised under a similar disjointness guarantee. Finally, our performance
+applies to the synchronous decision phase; the apply phase is sequential. We
+explored parallelising it and found the trade-off less clean than it first
+appears: an apply phase that is safe to parallelise must write only to the agent
+itself, yet the immediate model-level writes of a general apply phase (collision
+resolution between competing decisions, updates to a derived field) are exactly
+what give synchronous activation its semantics. Keeping apply sequential
+preserves those semantics, and (Section~\ref{sec:perf}) it is not the binding
+cost for the models where parallelism matters most. Finally, our performance
 evaluation covers two grid-based models (SIR and Schelling); the graph and
 continuous-space paradigms, though supported by the same API, are not
 benchmarked here, so the cross-engine margins should not be assumed to transfer
