@@ -23,3 +23,6 @@ __pycache__/
 *.pyc
 dist/
 *.egg-info/
+
+# Figure preview PNGs (los PDF vectoriales sí se versionan)
+paper/figs/*.png

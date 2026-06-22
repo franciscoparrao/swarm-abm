@@ -328,7 +328,7 @@ as related work; the last two target distributed and GPU execution beyond a
 single CPU node.
 
 \subsection{Cross-engine throughput}
-Table~\ref{tab:crossengine} reports per-step cost on spatial SIR and Schelling.
+Figure~\ref{fig:perf} reports per-step cost on spatial SIR and Schelling.
 swarm-abm is 2--5$\times$ faster than Agents.jl and 45--184$\times$ faster than
 Mesa across two distinct access patterns (in-place contagion versus mobility
 with vacancies). As a sanity check that the Agents.jl mirrors are idiomatic and
@@ -337,27 +337,16 @@ expected range --- so the margin over Agents.jl is not an artefact of a
 hobbled comparator. (The 184$\times$ figure over Mesa on large Schelling partly
 reflects Mesa's $O(n)$ handling of empty cells, not raw compute alone.)
 
-\begin{table}[t]
+\begin{figure}[t]
 \centering
-\caption{Cross-engine cost (ms/step, median of 3 seeds). Speedups are
-swarm-abm relative to each comparator.}
-\label{tab:crossengine}
-\begin{tabular}{llrrrrr}
-\toprule
-Model & Grid & swarm-abm & Agents.jl & Mesa & vs Agents.jl & vs Mesa \\
-\midrule
-SIR & $25^2$  & 0.016 & 0.058 & 0.87  & 3.6 & 54 \\
-SIR & $50^2$  & 0.067 & 0.275 & 3.55  & 4.1 & 53 \\
-SIR & $100^2$ & 0.246 & 1.287 & 14.6  & 5.2 & 59 \\
-SIR & $200^2$ & 1.339 & 6.619 & 64.6  & 4.9 & 48 \\
-\midrule
-Schelling & $25^2$  & 0.052 & 0.121 & 2.32  & 2.3 & 45  \\
-Schelling & $50^2$  & 0.176 & 0.562 & 8.95  & 3.2 & 51  \\
-Schelling & $100^2$ & 0.838 & 2.639 & 54.8  & 3.1 & 65  \\
-Schelling & $200^2$ & 3.388 & 12.90 & 621.9 & 3.8 & 184 \\
-\bottomrule
-\end{tabular}
-\end{table}
+\includegraphics[width=\linewidth]{../figs/fig_performance.pdf}
+\caption{Cross-engine per-step cost on spatial SIR (a) and Schelling (b),
+median of three seeds, on log--log axes. swarm-abm is 2--5$\times$ faster than
+Agents.jl and 45--184$\times$ faster than Mesa across both access patterns;
+Agents.jl is itself 10--48$\times$ faster than Mesa, within its expected range,
+confirming that the comparators are idiomatic. Raw values are in the repository.}
+\label{fig:perf}
+\end{figure}
 
 In absolute terms, the engine sustains tens of millions of agent-steps per
 second on a single thread (criterion microbenchmarks), so the cross-engine
@@ -368,7 +357,7 @@ The deterministic parallel decision phase (Section~\ref{sec:sync}) is the
 engine's intra-step parallelism. Its benefit depends on whether per-agent
 decisions are compute- or memory-bound, which we separate with a Game-of-Life
 bench (250\,000 agents, 30 steps, median of 3 replicates) carrying a tunable
-per-agent decision cost (Table~\ref{tab:scaling}). When decisions are
+per-agent decision cost (Figure~\ref{fig:scaling}). When decisions are
 compute-bound --- the regime of agents with expensive logic (utility
 maximisation, perception, local optimisation), common in economic and social
 ABM --- the phase scales to $5.3\times$ on 16 threads. When they are
@@ -377,20 +366,16 @@ bandwidth, not cores, is the limit, as expected for stencil computations.
 Amdahl's law sets the ceiling --- the apply phase is sequential --- which is a
 natural target for future work.
 
-\begin{table}[t]
+\begin{figure}[t]
 \centering
-\caption{Strong scaling of the parallel decision phase (speedup versus the
-1-thread parallel run). Compute- versus memory-bound per-agent decisions.}
-\label{tab:scaling}
-\begin{tabular}{lrrrrr}
-\toprule
-Regime & 1 & 2 & 4 & 8 & 16 \\
-\midrule
-Compute-bound & 1.00 & 1.68 & 2.57 & 3.89 & 5.27 \\
-Memory-bound  & 1.00 & 1.08 & 1.27 & 1.48 & 1.63 \\
-\bottomrule
-\end{tabular}
-\end{table}
+\includegraphics[width=0.62\linewidth]{../figs/fig_scaling.pdf}
+\caption{Strong scaling of the parallel decision phase: speedup versus the
+sequential run as threads increase, for compute-bound and memory-bound
+per-agent decisions, with the ideal linear reference. Compute-bound decisions
+scale to $5.3\times$ on 16 threads; memory-bound (plain Game of Life, a stencil)
+saturate at $1.6\times$ as memory bandwidth, not cores, becomes the limit.}
+\label{fig:scaling}
+\end{figure}
 
 Combined with the single-thread advantage over Agents.jl, the parallel decision
 phase widens the gap precisely in the regime --- expensive per-agent decisions
