@@ -13,15 +13,16 @@
 | C2 | 🔴 | Historia HPC débil; krABMaga más rápido + distribuido | (a) trade-off defendido; (b) `apply` paralelo EXPLORADO y descartado: conflicto de semántica (apply paralelizable = solo-self → pierde las escrituras inmediatas que dan sentido a la activación síncrona; y apply es fracción chica en compute-bound). Paper §5.3/§8 corregidos al hallazgo | escritura / ingeniería | S / L | ☑ (a hecho; b explorado→no) |
 | C3 | 🟠 | "Compiler-verified" se lee como feature de Rust, no aporte de M&S general | Discusión: principio agnóstico al lenguaje (const-correctness/ownership/capabilities); "the contribution is the principle, not the language" | escritura | S | ☑ |
 | S1 | 🟡 | La garantía es más angosta de lo enunciado (el snapshot lo construye el autor) | §3.2: scope explícito — el compilador impide escribir el modelo, no certifica el snapshot | escritura | S | ☑ |
-| S2 | 🟡 | Benchmarks con solo 3 réplicas, sin IC (vs 50 en la paridad) | Re-correr con N réplicas + reportar IC/IQR | experimento | M | ☐ |
-| S3 | 🟡 | Solo 2 modelos de grilla; grafo/continuo sin medir | Medir throughput de swarm-abm en grafo (network-sir) y continuo (boids) | experimento | M–L | ☐ |
+| S2 | 🟡 | Benchmarks con solo 3 réplicas, sin IC (vs 50 en la paridad) | n=10 seeds; speedup por-seed (load-independent) mediana 4.8x IQR 4.5-5.3x; reportado en §5.1 | experimento | M | ☑ |
+| S3 | 🟡 | Solo 2 modelos de grilla; grafo/continuo sin medir | --bench en network-sir/boids; throughput grafo ~2e7, continuo ~4e5 agent-steps/s; §5 nueva subsección + §8 limitación corregida | experimento | M–L | ☑ |
 | S4 | 🟡 | Frontera con el manuscrito ESPL poco clara | §6: delimitado — el motor es de este paper; el modelo/calibración debris-flow son del manuscrito ESPL, no re-reclamados | escritura | S | ☑ |
 | S5 | 🟡 | Sin enunciado formal de la propiedad | §3.3: Property (deterministic parallelism) etiquetada con precondición del snapshot y alcance | escritura | S | ☑ |
 | Z | 🟢 | Depósito archivado (Zenodo DOI) — también en R1 #12 | Acuñar DOI (post-ESPL) | admin | S | ☐ |
 
-> **Estado (2026-06-22):** bloque de escritura HECHO (C1, C2a, C3, S1, S4, S5;
-> compila 18 pp, em-dashes 0, refs Fujimoto verificadas). PENDIENTE: experimentos
-> opcionales S2 (réplicas+IC), S3 (grafo/continuo), C2b (paralelizar apply), y Z.
+> **Estado (2026-06-22):** TODO el review en frío abordado salvo Z (Zenodo,
+> post-ESPL). C1/C2a/C3/S1/S4/S5 (escritura) + C2b (explorado→descartado con
+> fundamento) + S2 (n=10, IQR del speedup) + S3 (throughput 3 paradigmas).
+> Paper 19 pp, compila, workspace CI verde. Pendiente solo Z + placeholders.
 
 ## 🔴 Detalle de los deciders accept/reject
 

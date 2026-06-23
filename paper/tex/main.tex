@@ -350,11 +350,17 @@ two engines reach end-of-epidemic at different steps under different
 generators, we report \emph{milliseconds per step}; model construction is
 excluded from timing in all engines; for the Julia engine we warm up the JIT
 before measuring (so compilation is never timed); each cell is the median of
-three seeds. The comparators are Agents.jl 7.0.2 (Julia 1.10), the fastest
-compiled ABM framework, and Mesa 3.5 (CPython 3.12). NetLogo, Repast HPC
+seeds. The comparators are Agents.jl 7.0.2 (Julia 1.10), one of the fastest
+compiled ABM frameworks, and Mesa 3.5 (CPython 3.12). NetLogo, Repast HPC
 \cite{collier2013repast} and FLAME GPU \cite{richmond2023flamegpu} are discussed
 as related work; the last two target distributed and GPU execution beyond a
-single CPU node.
+single CPU node. To bound dispersion we repeated the SIR comparison over ten
+seeds. Absolute per-step timings carry seed- and load-dependent variance
+(interquartile range roughly 10--25\%), so we summarise the comparison by the
+\emph{per-seed speedup ratio}, which cancels shared run conditions: the
+swarm-abm-over-Agents.jl ratio on SIR has a median of $4.8\times$ (interquartile
+range $4.5$--$5.3\times$, $n=10$) at $100^2$, confirming the margin is not an
+artefact of few replicates.
 
 \subsection{Cross-engine throughput}
 Figure~\ref{fig:perf} reports per-step cost on spatial SIR and Schelling.
@@ -390,6 +396,19 @@ claim over krABMaga; what swarm-abm adds relative to it is \emph{deterministic,
 reproducible parallelism} and the compiler-verified synchronous update, neither
 of which krABMaga provides (Section~\ref{sec:discussion}). The mirrors are in
 the repository.
+
+\subsection{Throughput across spatial paradigms}
+The comparison above uses grid models; to check that the engine's generality is
+not merely nominal, we measured single-thread throughput on the other two
+paradigms. On a network (small-world SIR, $50\,000$ nodes) the engine sustains
+on the order of $2\times10^7$ agent-steps per second, comparable to the grid; on
+continuous space (Reynolds flocking, $20\,000$ boids) it sustains on the order
+of $4\times10^5$, roughly fifty times lower. The gap is a property of the
+models, not the engine: flocking performs a radius query and rebuilds a spatial
+index every agent-step, far heavier than the fixed-degree neighbour lookups of
+the grid and the network. All three paradigms run within the same engine; a
+\emph{cross-engine} comparison on the network and continuous paradigms is left
+to future work.
 
 \subsection{Scalability of the parallel decision phase}
 The deterministic parallel decision phase (Section~\ref{sec:sync}) is the
@@ -541,11 +560,12 @@ itself, yet the immediate model-level writes of a general apply phase (collision
 resolution between competing decisions, updates to a derived field) are exactly
 what give synchronous activation its semantics. Keeping apply sequential
 preserves those semantics, and (Section~\ref{sec:perf}) it is not the binding
-cost for the models where parallelism matters most. Finally, our performance
-evaluation covers two grid-based models (SIR and Schelling); the graph and
-continuous-space paradigms, though supported by the same API, are not
-benchmarked here, so the cross-engine margins should not be assumed to transfer
-unchanged to those settings.
+cost for the models where parallelism matters most. Finally, while we report
+single-engine throughput for all three spatial paradigms
+(Section~\ref{sec:perf}), the \emph{cross-engine} comparison covers only the two
+grid-based models (SIR and Schelling), so the margins over Agents.jl, Mesa and
+krABMaga should not be assumed to transfer unchanged to the network and
+continuous-space settings.
 
 \section{Conclusions}
 \label{sec:conclusion}
