@@ -32,15 +32,60 @@ jobs:
         run: cargo clippy --workspace --all-targets -- -D warnings
 
       - name: Clippy (sin features por defecto, camino WASM/secuencial)
-        run: cargo clippy -p swarm-core --no-default-features --all-targets -- -D warnings
+        run: cargo clippy -p swarm-abm --no-default-features --all-targets -- -D warnings
 
       - name: Tests
         run: cargo test --workspace
 
       - name: Tests (sin features por defecto)
-        run: cargo test -p swarm-core --no-default-features
+        run: cargo test -p swarm-abm --no-default-features
 
       - name: Docs (los warnings de rustdoc fallan el build)
         env:
           RUSTDOCFLAGS: -D warnings
         run: cargo doc --workspace --no-deps
+
+  golden-values-wasm32:
+    name: valores dorados en wasm32 (identidad cross-platform del wedge)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust toolchain (+ wasm32-wasip1)
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-wasip1
+
+      - name: Cache cargo build
+        uses: Swatinem/rust-cache@v2
+
+      - name: Install wasmtime
+        run: |
+          curl -sSf https://wasmtime.dev/install.sh | bash -s -- --version v27.0.0
+          echo "$HOME/.wasmtime/bin" >> "$GITHUB_PATH"
+
+      - name: Golden values on wasm32-wasip1 (via wasmtime)
+        env:
+          CARGO_TARGET_WASM32_WASIP1_RUNNER: wasmtime
+        run: |
+          cargo test --target wasm32-wasip1 -p swarm-abm --no-default-features --test golden_values
+          cargo test --target wasm32-wasip1 -p swarm-abm --no-default-features --test determinism
+
+  msrv:
+    name: MSRV (1.87 — swarm-abm / swarm-abm-derive)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # Pinned, not `stable`: this job's entire point is catching a change
+      # that raises the *real* minimum, not just checking today's stable.
+      - name: Install Rust 1.87.0
+        uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: "1.87.0"
+
+      - name: Cache cargo build
+        uses: Swatinem/rust-cache@v2
+
+      - name: cargo test at MSRV (all features)
+        run: cargo test -p swarm-abm -p swarm-abm-derive --all-features

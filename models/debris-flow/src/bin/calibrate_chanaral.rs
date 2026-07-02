@@ -16,7 +16,7 @@ use debris_flow::{
     Bounds, DebrisFlowModel, Method, PARAM_DIMS_CHANARAL, evaluate_masked, load,
     params_chanaral_from_genes,
 };
-use swarm_core::prelude::*;
+use swarm_abm::prelude::*;
 
 fn arg_value<T: std::str::FromStr>(args: &[String], name: &str) -> Option<T> {
     args.iter()

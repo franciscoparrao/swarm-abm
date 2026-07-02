@@ -11,7 +11,7 @@ crate-type = ["cdylib"]
 
 [dependencies]
 # Camino secuencial (sin rayon): wasm32-unknown-unknown no tiene hilos.
-swarm-core = { path = "../swarm-core", default-features = false }
+swarm-abm = { path = "../swarm-abm", default-features = false }
 swarm-models = { path = "../swarm-models", default-features = false }
 wasm-bindgen = "0.2"
 

@@ -1,11 +1,11 @@
 [package]
 name = "schelling"
-description = "Modelo de segregación de Schelling sobre swarm-core"
+description = "Modelo de segregación de Schelling sobre swarm-abm"
 publish = false
 version.workspace = true
 edition.workspace = true
 license.workspace = true
 
 [dependencies]
-swarm-core = { workspace = true }
+swarm-abm = { workspace = true }
 swarm-models = { workspace = true }

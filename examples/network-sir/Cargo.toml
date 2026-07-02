@@ -1,10 +1,10 @@
 [package]
 name = "network-sir"
-description = "Contagio SIR sobre redes (grafo) usando swarm-core::graph"
+description = "Contagio SIR sobre redes (grafo) usando swarm-abm::graph"
 publish = false
 version.workspace = true
 edition.workspace = true
 license.workspace = true
 
 [dependencies]
-swarm-core = { workspace = true }
+swarm-abm = { workspace = true }

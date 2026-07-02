@@ -1,0 +1,26 @@
+[package]
+name = "sigrid"
+description = "Modelo ABM de depredación de ovejas y perros guardianes (Isla Riesco / SIGRID) sobre swarm-abm. Port del modelo Mesa para análisis de sensibilidad global (Sobol) habilitado por HPC."
+publish = false
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+swarm-abm = { workspace = true }
+rayon = { workspace = true, optional = true }
+
+[features]
+default = []
+parallel = ["dep:rayon", "swarm-abm/parallel"]
+
+[lib]
+name = "sigrid"
+
+[[bin]]
+name = "sigrid"
+path = "src/main.rs"
+
+[[bin]]
+name = "sobol-eval"
+path = "src/bin/sobol_eval.rs"

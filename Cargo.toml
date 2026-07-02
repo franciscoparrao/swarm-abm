@@ -1,17 +1,20 @@
 [workspace]
 resolver = "3"
 members = [
-    "crates/swarm-core",
+    "crates/swarm-abm",
+    "crates/swarm-abm-derive",
     "crates/swarm-models",
     "examples/boids",
     "examples/difusion",
     "examples/life",
+    "examples/multi-agent",
     "examples/network-sir",
     "examples/rng-dump",
     "examples/schelling",
     "examples/sir",
     "examples/sugarscape",
     "models/debris-flow",
+    "models/sigrid",
 ]
 
 # swarm-py (bindings PyO3) se construye con maturin, no con cargo --workspace:
@@ -24,15 +27,29 @@ version = "0.3.0"
 edition = "2024"
 license = "MIT OR Apache-2.0"
 repository = "https://github.com/franciscoparrao/swarm-abm"
+# MSRV of the published crates (swarm-abm, swarm-abm-derive), verified
+# empirically (cargo +1.87.0 test -p swarm-abm -p swarm-abm-derive
+# --all-features): edition 2024 alone needs 1.85, but `f64::next_down`
+# (continuous.rs) needs 1.86 and `u64::is_multiple_of` (sim.rs) needs 1.87.
+# Bumping the MSRV is a minor version bump, not a patch — see
+# docs/REPRODUCIBILITY.md. Not applied workspace-wide: the research model
+# crates (models/sigrid, models/debris-flow) use let-chains (1.88+) and
+# aren't published, so they aren't held to this.
+rust-version = "1.87"
 
 [workspace.dependencies]
-swarm-core = { path = "crates/swarm-core" }
+# `version` is required alongside `path` so `cargo publish` can emit a
+# publishable dependency (crates.io rejects path-only deps with no version
+# requirement) — see P3-3 in docs/AUDIT.md.
+swarm-abm = { path = "crates/swarm-abm", version = "0.3.0" }
+swarm-abm-derive = { path = "crates/swarm-abm-derive", version = "0.3.0" }
 swarm-models = { path = "crates/swarm-models" }
 # Sin default-features: el motor solo usa RNG sembrado (ChaCha8), no necesita
 # std_rng/os_rng/thread_rng (que arrastran getrandom y no compilan en wasm).
 rand = { version = "0.9", default-features = false, features = ["alloc"] }
 rand_chacha = "0.9"
 criterion = "0.5"
+serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 rayon = "1"
 

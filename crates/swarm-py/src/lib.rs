@@ -17,8 +17,8 @@
 
 use pyo3::prelude::*;
 
-use swarm_core::batch::run_sweep;
-use swarm_core::prelude::*;
+use swarm_abm::batch::run_sweep;
+use swarm_abm::prelude::*;
 use swarm_models::schelling::{self, Schelling as SchellingModel, SchellingConfig};
 use swarm_models::sir::{self, Sir as SirModel, SirConfig, Status};
 use swarm_models::sugarscape::{self, Sugarscape as SugarscapeModel, SugarscapeConfig};

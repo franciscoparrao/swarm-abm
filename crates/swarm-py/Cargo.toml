@@ -11,7 +11,7 @@ name = "swarm_abm"
 crate-type = ["cdylib"]
 
 [dependencies]
-swarm-core = { path = "../swarm-core" }
+swarm-abm = { path = "../swarm-abm" }
 swarm-models = { path = "../swarm-models" }
 
 [dependencies.pyo3]

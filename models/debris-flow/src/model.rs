@@ -1,5 +1,5 @@
 //! Modelo V4 HYBRID v2 de flujos de detritos, portado fielmente desde
-//! `debris-flow-abm/src/simulate_copiapo.py` (Mesa/Python) a swarm-core.
+//! `debris-flow-abm/src/simulate_copiapo.py` (Mesa/Python) a swarm-abm.
 //!
 //! Dos tipos de agente sobre un mismo [`AgentSet`] (enum):
 //! - [`Raindrop`]: posición fija; según el patrón horario de lluvia y las
@@ -23,7 +23,7 @@
 
 use std::sync::Arc;
 
-use swarm_core::prelude::*;
+use swarm_abm::prelude::*;
 
 use crate::raster::Window;
 

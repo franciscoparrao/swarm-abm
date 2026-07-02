@@ -1,13 +1,13 @@
 [package]
 name = "debris-flow"
-description = "Modelo ABM de flujos de detritos (V4 HYBRID v2, Atacama 2015) sobre swarm-core"
+description = "Modelo ABM de flujos de detritos (V4 HYBRID v2, Atacama 2015) sobre swarm-abm"
 publish = false
 version.workspace = true
 edition.workspace = true
 license.workspace = true
 
 [dependencies]
-swarm-core = { workspace = true }
+swarm-abm = { workspace = true }
 serde_json = { workspace = true }
 rayon = { workspace = true }
 

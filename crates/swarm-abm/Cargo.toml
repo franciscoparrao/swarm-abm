@@ -1,0 +1,60 @@
+[package]
+name = "swarm-abm"
+description = "Spatial agent-based modeling engine: scheduling, grids/graphs/continuous space, and deterministic reproducibility"
+readme = "README.md"
+keywords = ["agent-based-modeling", "simulation", "abm", "deterministic", "netlogo"]
+categories = ["simulation", "science"]
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+rand = { workspace = true }
+rand_chacha = { workspace = true }
+rayon = { workspace = true, optional = true }
+serde = { workspace = true, optional = true }
+# Secuencias Sobol' de baja discrepancia (números de dirección Joe & Kuo,
+# recurrencia de Antonov-Saleev), solo para `experiment::sobol_design`.
+# A diferencia de `rand::Rng::random_range` (P0-2, que SÍ se reimplementó
+# porque su algoritmo interno no tiene garantía de estabilidad entre
+# versiones de `rand`), una secuencia Sobol' es una **especificación
+# matemática**: dados los mismos números de dirección, la secuencia está
+# unívocamente determinada — no hay "elección de algoritmo" que una
+# actualización de esta dependencia pueda cambiar. BSD-3-Clause.
+sobol = { version = "1", optional = true }
+swarm-abm-derive = { workspace = true }
+
+[features]
+# Ejecución paralela de ensembles/barridos (rayon). Activado por defecto;
+# desactivar (p. ej. para WASM) corre los ensembles secuencialmente.
+default = ["parallel"]
+parallel = ["dep:rayon"]
+# Checkpoint/restore: deriva Serialize/Deserialize en las estructuras del
+# motor (Grid2D, Graph, ContinuousSpace, AgentSet) y en rand_chacha (el
+# estado del RNG). No incluye DataCollector/AgentDataCollector: sus
+# reporters son closures, no serializables en general — se re-registran
+# tras restaurar (ver `Simulation::from_checkpoint`).
+serde = ["dep:serde", "rand_chacha/serde"]
+# Diseño de experimentos determinista: LHS, Morris y análisis de
+# sensibilidad de Sobol' (S1/ST, esquema de Saltelli, con bootstrap).
+# Trae la dependencia `sobol` (secuencias de baja discrepancia); no
+# activada por defecto para no forzarla en el camino WASM.
+experiment = ["dep:sobol"]
+
+[dev-dependencies]
+serde_json = { workspace = true }
+
+# criterion depends on rayon, which refuses to compile for wasm32 (see its
+# own compile_error!). It's only needed for `cargo bench`, never for
+# `cargo test`, so it's scoped out of the wasm target family entirely
+# rather than gated behind a feature (dev-dependencies can't be optional) —
+# this lets `cargo test --target wasm32-wasip1` build cleanly, which is
+# what the golden-values cross-platform CI job (P3-2) needs.
+[target.'cfg(not(target_family = "wasm"))'.dev-dependencies]
+criterion = { workspace = true }
+
+[[bench]]
+name = "engine"
+harness = false

@@ -11,7 +11,7 @@
 //!
 //! Uso: `cargo run --release -p network-sir [semilla]`
 
-use swarm_core::prelude::*;
+use swarm_abm::prelude::*;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Status {
@@ -46,8 +46,7 @@ impl NetworkSir {
     fn infected_neighbors(&self, node: NodeId) -> u32 {
         self.net
             .neighbors(node)
-            .iter()
-            .filter(|&&nb| {
+            .filter(|&nb| {
                 let aid = self.node_agent[nb.as_usize()];
                 self.agents
                     .get(aid)

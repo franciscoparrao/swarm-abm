@@ -1,31 +1,32 @@
-# swarm-wasm — visor WASM de swarm-abm
+# swarm-wasm — swarm-abm WASM viewer
 
-Corre los modelos del motor (Schelling, SIR, Sugarscape) en el navegador, sobre
-un `<canvas>`. El bucle de simulación se compila a WebAssembly; JavaScript solo
-anima y dibuja el buffer RGBA que entrega cada paso.
+Runs the engine's models (Schelling, SIR, Sugarscape) in the browser, on a
+`<canvas>`. The simulation loop compiles to WebAssembly; JavaScript only
+animates and draws the RGBA buffer produced each step.
 
-## Construir y servir
+## Build and serve
 
 ```bash
-# desde crates/swarm-wasm/
+# from crates/swarm-wasm/
 wasm-pack build --target web --out-dir www/pkg --release
 cd www && python3 -m http.server 8000
-# abrir http://localhost:8000
+# open http://localhost:8000
 ```
 
-`www/pkg/` es código generado (no versionado): hay que construirlo antes de
-servir. El `.wasm` resultante pesa ~68 KB.
+`www/pkg/` is generated code (not version-controlled): build it before
+serving. The resulting `.wasm` weighs ~68 KB.
 
-## Por qué está fuera del workspace
+## Why it's outside the workspace
 
-Igual que `swarm-py`, este crate se excluye del `cargo --workspace`: se compila
-a `wasm32-unknown-unknown` con `wasm-pack`, no con el `cargo` del workspace. Usa
-`swarm-core`/`swarm-models` con `default-features = false` (sin rayon: el target
-wasm no tiene hilos), por lo que los ensembles correrían en secuencia — pero el
-visor solo necesita avanzar un modelo paso a paso.
+Like `swarm-py`, this crate is excluded from `cargo --workspace`: it
+compiles to `wasm32-unknown-unknown` with `wasm-pack`, not with the
+workspace's `cargo`. It uses `swarm-abm`/`swarm-models` with
+`default-features = false` (no rayon: the wasm target has no threads), so
+ensembles would run sequentially — but the viewer only needs to advance
+one model step by step.
 
-## Controles
+## Controls
 
-Selector de modelo, un parámetro por modelo (tolerancia / β / crecimiento),
-tamaño de grilla, velocidad (pasos por frame), play/pausa/paso/reset y semilla.
-Misma semilla ⇒ misma corrida (el motor es determinista también en wasm).
+Model selector, one parameter per model (tolerance / β / growth), grid
+size, speed (steps per frame), play/pause/step/reset, and seed. Same seed
+⇒ same run (the engine is deterministic in wasm too).

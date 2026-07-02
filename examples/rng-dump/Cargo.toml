@@ -7,4 +7,4 @@ edition.workspace = true
 license.workspace = true
 
 [dependencies]
-swarm-core = { workspace = true }
+swarm-abm = { workspace = true }

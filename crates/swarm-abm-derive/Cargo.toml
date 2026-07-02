@@ -1,0 +1,21 @@
+[package]
+name = "swarm-abm-derive"
+description = "#[derive(MultiAgent)] macro for swarm-abm: heterogeneous agents without dead fields"
+keywords = ["agent-based-modeling", "derive", "macro", "abm"]
+categories = ["development-tools::procedural-macro-helpers", "simulation"]
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+
+[lib]
+proc-macro = true
+
+[dependencies]
+syn = { version = "2", features = ["full"] }
+quote = "1"
+proc-macro2 = "1"
+
+[dev-dependencies]
+trybuild = "1"

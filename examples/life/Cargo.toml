@@ -8,8 +8,8 @@ license.workspace = true
 
 [dependencies]
 # Path directo para poder reenviar la feature `parallel` (default ON).
-swarm-core = { path = "../../crates/swarm-core", default-features = false }
+swarm-abm = { path = "../../crates/swarm-abm", default-features = false }
 
 [features]
 default = ["parallel"]
-parallel = ["swarm-core/parallel"]
+parallel = ["swarm-abm/parallel"]

@@ -8,7 +8,7 @@
 //! conjunto que el paper original de `debris-flow-abm`, ahora comparables con
 //! rigor estadístico gracias al rendimiento del motor.
 
-use swarm_core::prelude::*;
+use swarm_abm::prelude::*;
 
 /// Rangos por dimensión del espacio de búsqueda.
 pub struct Bounds {

@@ -1,0 +1,7 @@
+error: MultiAgent can only be derived on an enum (one variant per agent type)
+ --> tests/ui/not_an_enum.rs:4:1
+  |
+4 | / struct NotAnEnum {
+5 | |     x: i32,
+6 | | }
+  | |_^

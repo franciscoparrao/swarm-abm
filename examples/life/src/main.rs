@@ -14,7 +14,7 @@
 //! RAYON_NUM_THREADS=4 cargo run --release -p life -- --bench --parallel ...
 //! ```
 
-use swarm_core::prelude::*;
+use swarm_abm::prelude::*;
 
 struct Cell {
     pos: Pos,

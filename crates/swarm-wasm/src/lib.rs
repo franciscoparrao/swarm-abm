@@ -10,7 +10,7 @@
 
 use wasm_bindgen::prelude::*;
 
-use swarm_core::prelude::*;
+use swarm_abm::prelude::*;
 use swarm_models::{schelling, sir, sugarscape};
 
 /// Convierte categorías por celda en un buffer RGBA (4 bytes por celda),

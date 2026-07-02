@@ -1,4 +1,4 @@
-//! Modelo ABM de flujos de detritos (evento Atacama 2015) sobre swarm-core.
+//! Modelo ABM de flujos de detritos (evento Atacama 2015) sobre swarm-abm.
 //!
 //! Port fiel de `debris-flow-abm` (Mesa/Python, V4 HYBRID v2). Es el primer
 //! "modelo cliente" real del motor: valida que la API generaliza más allá de

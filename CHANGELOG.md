@@ -6,8 +6,83 @@ puede cambiar entre minors.
 
 ## [Sin publicar]
 
+### Rompe determinismo
+
+Ver `docs/REPRODUCIBILITY.md` para la política completa. Estos cuatro
+cambios alteran los bits exactos que produce el motor para una semilla
+dada — no solo la API — así que cualquier resultado numérico publicado con
+una versión anterior necesita re-validarse (ver
+`models/sigrid/PARITY.md`, sección "Re-validación 2026-07-02", como caso
+de estudio real de qué implica eso: los números cambiaron, las
+conclusiones científicas no).
+
+- `Graph::barabasi_albert` dejó de depender del orden de iteración (no
+  garantizado) de un `HashSet` interno.
+- `rng::{uniform_below, uniform_usize, uniform_f64, bernoulli, shuffle}`
+  reemplazan el uso interno y recomendado de `rand::Rng::random_range`/
+  `random_bool`/`SliceRandom::shuffle` (algoritmo no especificado por
+  `rand`, sujeto a cambiar entre versiones sin previo aviso).
+- `rng::child_rng` combina `(semilla, paso, agente)` en cadena (estilo
+  hash-combine) en vez de con XOR de tres hashes independientes.
+- `AgentSet`/`ContinuousSpace` pasan a una arena generacional con
+  reutilización de slots (`AgentId`/`PointId` = `{index, generation}`):
+  cualquier modelo con demografía (inserciones/remociones en runtime)
+  puede ver una asignación distinta de índices frente a versiones
+  anteriores.
+
 ### Añadido
 
+- **Auditoría de ingeniería completa del motor** (`docs/AUDIT.md`): 5
+  hallazgos P0 (correctitud del determinismo), 9 P1 (arquitectura) y el
+  diferenciador P3-4, todos resueltos con test coverage real (no solo
+  "compila"). Resumen de lo nuevo:
+  - `swarm_abm::experiment` (feature opcional `experiment`): diseño de
+    experimentos **determinista por construcción** — `sobol`/
+    `latin_hypercube`/`morris`, con análisis de sensibilidad global
+    (S1 de Saltelli 2010, ST de Jansen 1999, bootstrap 95% CI), validado
+    contra la función de Ishigami (índices analíticos conocidos).
+    Internaliza el arnés híbrido SALib+Rust que usaba SIGRID.
+  - `#[derive(MultiAgent)]` (crate `swarm-abm-derive`, macro procedural):
+    heterogeneidad de agentes vía `enum` sin campos muertos ni trait
+    objects — el despacho sigue siendo un `match` estático.
+  - `Agent::decide_with_peers`/`Simulation::step_with_peers` (+ variante
+    paralela): la fase `decide` puede observar un snapshot congelado de
+    **todos** los agentes, aditivo (no cambia la firma de `decide`, no
+    fuerza `Clone` a modelos que no lo usan).
+  - `Activation::Staged(n)` + `Agent::stage`: N barridos completos por
+    paso con modelo mutable, garantizando que todos los agentes completen
+    la etapa `s` antes de que cualquiera entre a `s+1` (patrón
+    `StagedActivation` de Mesa).
+  - `Simulation::from_checkpoint`/`rng_state`/`seed` (feature `serde`):
+    checkpoint/restore bit-exacto a partir de 4 piezas mínimas (modelo,
+    semilla, estado del RNG, pasos corridos).
+  - `AgentDataCollector`: recolección de series **por agente** (no solo a
+    nivel modelo), más `Simulation::with_collect_every` para muestrear 1
+    de cada N pasos.
+  - `Graph<N, E = ()>` generalizado con pesos por arista
+    (`add_weighted_edge`) y grafos dirigidos (`directed(bool)`).
+  - `Grid2D::neighbor_positions_r`/`neighbors_r`/`random_neighbor_r`:
+    vecindades de radio arbitrario (antes fijo en 1), con muestreo por
+    reservorio.
+  - `ContinuousSpace` v2: arena generacional con `remove()` real, índice
+    espacial en buckets planos (sin `Vec<Vec<PointId>>`), sin `HashSet`
+    en `for_each_within`.
+  - Tests de **valores dorados** (`tests/golden_values.rs`): pinnean los
+    bytes exactos que produce cada primitiva de RNG del motor, para
+    detectar deriva silenciosa de una dependencia (`rand`/`rand_chacha`)
+    entre actualizaciones — no solo deriva propia del motor.
+- **CI en `wasm32-wasip1`** (`golden-values-wasm32`): corre los mismos
+  valores dorados bajo `wasmtime`, verificando en cada push que la
+  identidad cross-platform del motor no es una afirmación sino un gate de
+  CI. Job `msrv` adicional que fija el MSRV real (1.87.0, verificado
+  empíricamente, no solo declarado) en un toolchain pineado.
+- **`docs/REPRODUCIBILITY.md`**: política de estabilidad de primera clase
+  para el contrato de determinismo del motor — qué está garantizado, qué
+  no, y qué cuenta como cambio que rompe determinismo.
+- **Rustdoc, README y mensajes públicos en inglés**: los 12 archivos
+  fuente de `swarm-abm` (~4800 líneas), `swarm-abm-derive`, y los dos
+  `README.md` (raíz + `swarm-wasm`) traducidos para adopción
+  internacional — ver P3-1 en `docs/AUDIT.md` para el alcance exacto.
 - **`decide` paralelo intra-paso** para activación simultánea
   (`Simulation::run_parallel` / `step_parallel`, feature `parallel`): la fase
   `decide` se reparte entre hilos con rayon y da un resultado **bit-idéntico**
@@ -45,6 +120,16 @@ puede cambiar entre minors.
 
 ### Cambiado
 
+- **Los crates del motor se renombraron y se publicaron en crates.io**:
+  `swarm-core` → [`swarm-abm`](https://crates.io/crates/swarm-abm),
+  `swarm-derive` → [`swarm-abm-derive`](https://crates.io/crates/swarm-abm-derive)
+  (ambos v0.3.0). Motivo del rename: al preparar la publicación (P3-3) se
+  descubrió que ambos nombres originales ya existen en crates.io,
+  registrados por terceros sin relación con este proyecto — `swarm-derive`
+  son macros de `tetsy-libp2p`, `swarm-core` es un orquestador de agentes
+  de IA no relacionado con ABM. `swarm-abm` coincide con el nombre del
+  repositorio. Quien tenga una dependencia local por `path` a
+  `crates/swarm-core`/`crates/swarm-derive` necesita actualizarla.
 - `examples/sir`, `examples/schelling` y `examples/sugarscape` pasan a ser
   binarios delgados sobre `swarm-models` (misma salida, paridad bit a bit).
 - CI: cubre el camino `--no-default-features` (WASM/secuencial) y falla ante

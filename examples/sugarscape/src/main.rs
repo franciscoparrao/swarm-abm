@@ -8,7 +8,7 @@
 //!
 //! Uso: `cargo run --release -p sugarscape [semilla] [--steps N] [--csv]`
 
-use swarm_core::prelude::*;
+use swarm_abm::prelude::*;
 use swarm_models::sugarscape::{Sugarscape, SugarscapeConfig, build};
 
 /// Valor de un flag `--nombre valor`, si está presente.

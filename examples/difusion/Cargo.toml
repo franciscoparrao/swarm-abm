@@ -1,10 +1,10 @@
 [package]
 name = "difusion"
-description = "Difusión de feromona depositada por caminantes, sobre swarm-core"
+description = "Difusión de feromona depositada por caminantes, sobre swarm-abm"
 publish = false
 version.workspace = true
 edition.workspace = true
 license.workspace = true
 
 [dependencies]
-swarm-core = { workspace = true }
+swarm-abm = { workspace = true }

@@ -10,7 +10,7 @@
 //!
 //! Uso: `cargo run --release -p sir [semilla]`
 
-use swarm_core::prelude::*;
+use swarm_abm::prelude::*;
 use swarm_models::sir::{Sir, SirConfig, Status, build};
 
 /// Valor de un flag `--nombre valor`, si está presente.

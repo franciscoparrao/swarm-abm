@@ -11,7 +11,7 @@
 //!
 //! Uso: `cargo run --release -p boids [semilla]`
 
-use swarm_core::prelude::*;
+use swarm_abm::prelude::*;
 
 struct Boid {
     pos: Vec2,

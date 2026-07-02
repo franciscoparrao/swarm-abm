@@ -20,7 +20,7 @@ use std::time::Instant;
 
 use debris_flow::{Bounds, Method, PARAM_DIMS, load, params_from_genes, run_and_score};
 use rayon::prelude::*;
-use swarm_core::prelude::*;
+use swarm_abm::prelude::*;
 
 fn arg_value<T: std::str::FromStr>(args: &[String], name: &str) -> Option<T> {
     args.iter()

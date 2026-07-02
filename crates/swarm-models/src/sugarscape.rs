@@ -8,7 +8,7 @@
 //! De una población casi homogénea emerge una distribución de riqueza desigual
 //! (Gini alto) y la población se autorregula a la capacidad de carga.
 
-use swarm_core::prelude::*;
+use swarm_abm::prelude::*;
 
 /// Una celda del paisaje: capacidad máxima de azúcar, azúcar presente y el
 /// agente que la ocupa (si hay).
@@ -159,7 +159,7 @@ impl Agent for Ant {
         // Orden de ejes barajado por paso: rompe el sesgo direccional en los
         // empates exactos sin perder determinismo.
         let mut axes: [(i64, i64); 4] = [(0, -1), (0, 1), (-1, 0), (1, 0)];
-        axes.shuffle(rng);
+        shuffle(rng, &mut axes);
 
         for (dx, dy) in axes {
             for d in 1..=self.vision as i64 {
@@ -265,13 +265,15 @@ pub fn build(config: SugarscapeConfig, seed: u64) -> Sugarscape {
     });
 
     let mut coords: Vec<Pos> = grid.iter().map(|(p, _)| p).collect();
-    coords.shuffle(&mut rng);
+    shuffle(&mut rng, &mut coords);
 
     let mut agents = AgentSet::with_capacity(n_agents);
     for &pos in coords.iter().take(n_agents) {
-        let vision = rng.random_range(1..=6);
-        let metabolism = rng.random_range(1..=4);
-        let sugar = rng.random_range(5..=25);
+        // Rangos inclusivos vía uniform_usize(rng, n) + offset: `1..=6` tiene
+        // 6 valores, `1..=4` tiene 4, `5..=25` tiene 21.
+        let vision = 1 + uniform_usize(&mut rng, 6);
+        let metabolism = 1 + uniform_usize(&mut rng, 4) as u32;
+        let sugar = 5 + uniform_usize(&mut rng, 21) as u32;
         let id = agents.insert(Ant {
             pos,
             vision,

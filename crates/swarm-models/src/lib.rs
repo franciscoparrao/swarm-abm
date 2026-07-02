@@ -1,4 +1,4 @@
-//! Modelos ABM de referencia construidos sobre [`swarm_core`].
+//! Modelos ABM de referencia construidos sobre [`swarm_abm`].
 //!
 //! Cada modelo vive aquí —no como binario suelto— para que la **misma**
 //! implementación la reutilicen los ejemplos (`examples/*`), los bindings

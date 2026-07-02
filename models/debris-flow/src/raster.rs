@@ -4,7 +4,7 @@ use std::fs;
 use std::io;
 use std::path::Path;
 
-use swarm_core::prelude::*;
+use swarm_abm::prelude::*;
 
 use crate::model::Layers;
 

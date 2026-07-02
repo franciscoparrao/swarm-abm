@@ -1,0 +1,5 @@
+error: each MultiAgent variant must wrap exactly one type (found more than one field)
+ --> tests/ui/bad_variant_two_fields.rs:5:5
+  |
+5 |     Foo(i32, i32),
+  |     ^^^^^^^^^^^^^

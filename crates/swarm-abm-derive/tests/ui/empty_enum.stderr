@@ -1,0 +1,5 @@
+error: MultiAgent requires at least one variant
+ --> tests/ui/empty_enum.rs:4:1
+  |
+4 | enum Empty {}
+  | ^^^^^^^^^^^^^

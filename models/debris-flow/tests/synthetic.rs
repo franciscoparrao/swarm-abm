@@ -1,7 +1,7 @@
 //! Tests del modelo de flujos de detritos sobre terreno sintético.
 
 use debris_flow::{DebrisAgent, DebrisFlowModel, Layers, Params, Physics};
-use swarm_core::prelude::*;
+use swarm_abm::prelude::*;
 
 /// Plano inclinado que baja hacia +y, condiciones óptimas para generar flujo.
 fn layers_plano(width: usize, height: usize, slope_frac: f32) -> Layers {

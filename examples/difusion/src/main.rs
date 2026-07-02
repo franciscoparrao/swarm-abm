@@ -8,7 +8,7 @@
 //!
 //! Uso: `cargo run --release -p difusion [semilla]`
 
-use swarm_core::prelude::*;
+use swarm_abm::prelude::*;
 
 struct Walker {
     pos: Pos,

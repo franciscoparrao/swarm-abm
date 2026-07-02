@@ -5,7 +5,7 @@
 //! una celda vacía al azar. El resultado clásico: segregación emergente incluso
 //! con tolerancias bajas.
 
-use swarm_core::prelude::*;
+use swarm_abm::prelude::*;
 
 /// Grupo al que pertenece un agente.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -151,7 +151,7 @@ impl Agent for Person {
         if model.empties.is_empty() {
             return;
         }
-        let i = rng.random_range(0..model.empties.len());
+        let i = uniform_usize(rng, model.empties.len());
         let destino = model.empties.swap_remove(i);
         model.grid[self.pos] = None;
         model.grid[destino] = Some(id);
@@ -190,7 +190,7 @@ pub fn build(config: SchellingConfig, seed: u64) -> Schelling {
     let mut agents = AgentSet::new();
 
     let mut coords: Vec<Pos> = grid.iter().map(|(p, _)| p).collect();
-    coords.shuffle(&mut rng);
+    shuffle(&mut rng, &mut coords);
 
     let n_agents = ((width * height) as f64 * density).round() as usize;
     for (i, &pos) in coords.iter().take(n_agents).enumerate() {

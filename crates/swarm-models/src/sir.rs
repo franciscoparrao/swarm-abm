@@ -5,7 +5,7 @@
 //! recupera con probabilidad `gamma` por paso. Termina cuando no quedan
 //! infectados.
 
-use swarm_core::prelude::*;
+use swarm_abm::prelude::*;
 
 /// Estado epidemiológico de un agente.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -140,13 +140,13 @@ impl Agent for Person {
                 let k = model.infected_neighbors(self.pos);
                 if k > 0 {
                     let p = 1.0 - (1.0 - model.beta).powi(k as i32);
-                    if rng.random_bool(p) {
+                    if bernoulli(rng, p) {
                         self.status = Status::Infected;
                     }
                 }
             }
             Status::Infected => {
-                if rng.random_bool(model.gamma) {
+                if bernoulli(rng, model.gamma) {
                     self.status = Status::Recovered;
                 }
             }
@@ -203,7 +203,7 @@ pub fn build(config: SirConfig, seed: u64) -> Sir {
         }
     }
 
-    ids.shuffle(&mut rng);
+    shuffle(&mut rng, &mut ids);
     for &id in ids.iter().take(initial_infected) {
         if let Some(p) = agents.get_mut(id) {
             p.status = Status::Infected;

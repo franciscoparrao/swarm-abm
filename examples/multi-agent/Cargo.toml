@@ -1,0 +1,10 @@
+[package]
+name = "multi-agent"
+description = "Ecosistema depredador-presa: demuestra #[derive(MultiAgent)] (P1-3, heterogeneidad de agentes sin campos muertos)"
+publish = false
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+swarm-abm = { workspace = true }

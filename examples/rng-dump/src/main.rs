@@ -15,8 +15,8 @@
 
 use std::io::{self, Write};
 
-use swarm_core::prelude::*;
-use swarm_core::rng::child_rng;
+use swarm_abm::prelude::*;
+use swarm_abm::rng::child_rng;
 
 fn main() {
     let args: Vec<String> = std::env::args().skip(1).collect();

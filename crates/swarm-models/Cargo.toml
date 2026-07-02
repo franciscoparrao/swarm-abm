@@ -1,6 +1,6 @@
 [package]
 name = "swarm-models"
-description = "Modelos ABM de referencia sobre swarm-core, reutilizables por ejemplos, bindings y benches"
+description = "Modelos ABM de referencia sobre swarm-abm, reutilizables por ejemplos, bindings y benches"
 publish = false
 version.workspace = true
 edition.workspace = true
@@ -8,11 +8,11 @@ license.workspace = true
 
 [dependencies]
 # Path directo (no `workspace = true`) para poder apagar default-features:
-# el camino WASM pide swarm-models sin `parallel` → swarm-core sin rayon.
-swarm-core = { path = "../swarm-core", default-features = false }
+# el camino WASM pide swarm-models sin `parallel` → swarm-abm sin rayon.
+swarm-abm = { path = "../swarm-abm", default-features = false }
 
 [features]
-# Activa el rayon de swarm-core (para ensembles/barridos paralelos). Activado
+# Activa el rayon de swarm-abm (para ensembles/barridos paralelos). Activado
 # por defecto; los consumidores WASM piden `default-features = false`.
 default = ["parallel"]
-parallel = ["swarm-core/parallel"]
+parallel = ["swarm-abm/parallel"]

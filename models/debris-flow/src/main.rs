@@ -1,5 +1,5 @@
 //! Simulación del evento Copiapó (marzo 2015) con el modelo de flujos de
-//! detritos sobre swarm-core, y validación espacial contra ground truth.
+//! detritos sobre swarm-abm, y validación espacial contra ground truth.
 //!
 //! Uso: `cargo run --release -p debris-flow -- [--data DIR] [--seed N]
 //!       [--seeds N] [--agents N] [--steps N] [--temperature T]`
@@ -8,7 +8,7 @@ use std::path::PathBuf;
 use std::time::Instant;
 
 use debris_flow::{DebrisFlowModel, Params, evaluate, evaluate_masked, load};
-use swarm_core::prelude::*;
+use swarm_abm::prelude::*;
 
 fn arg_value<T: std::str::FromStr>(args: &[String], name: &str) -> Option<T> {
     args.iter()

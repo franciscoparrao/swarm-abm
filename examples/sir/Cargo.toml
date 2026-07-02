@@ -1,11 +1,11 @@
 [package]
 name = "sir"
-description = "Modelo SIR espacial (contagio en grilla) sobre swarm-core"
+description = "Modelo SIR espacial (contagio en grilla) sobre swarm-abm"
 publish = false
 version.workspace = true
 edition.workspace = true
 license.workspace = true
 
 [dependencies]
-swarm-core = { workspace = true }
+swarm-abm = { workspace = true }
 swarm-models = { workspace = true }

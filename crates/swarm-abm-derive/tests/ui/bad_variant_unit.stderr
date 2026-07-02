@@ -1,0 +1,5 @@
+error: each MultiAgent variant must wrap exactly one type, e.g. `Fox(Fox)` — unit variants and named fields aren't supported
+ --> tests/ui/bad_variant_unit.rs:5:5
+  |
+5 |     Foo,
+  |     ^^^

@@ -16,7 +16,7 @@ use std::time::Instant;
 
 use debris_flow::{PARAM_DIMS, load, params_from_genes, run_and_score};
 use rayon::prelude::*;
-use swarm_core::prelude::*;
+use swarm_abm::prelude::*;
 
 // El espacio de búsqueda (`PARAM_DIMS`) y el mapeo genes→`Params`
 // (`params_from_genes`) viven en `debris_flow::model`, compartidos con

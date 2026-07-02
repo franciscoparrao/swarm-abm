@@ -1,86 +1,86 @@
 # swarm-abm
 
-Motor de modelado basado en agentes (ABM) espacial en Rust — un
-"Mesa/NetLogo moderno": millones de agentes, determinismo reproducible y
-(a futuro) targets Python y WASM.
+Spatial agent-based modeling (ABM) engine in Rust — a "modern
+Mesa/NetLogo": millions of agents, reproducible determinism, and
+(eventually) Python and WASM targets.
 
-## Estructura
+## Structure
 
-- `crates/swarm-core` — el motor: traits `Agent`/`Model`, scheduler
-  (orden fijo, aleatorio o **simultáneo en dos fases**), `Grid2D` con
-  vecindades Moore/Von Neumann y torus opcional, `DataCollector` de
-  series por paso, RNG sembrable (ChaCha8, portable entre plataformas),
-  **batch runner** (`batch::run_ensemble` / `run_sweep`) para réplicas y
-  barridos de parámetros en paralelo (rayon, feature `parallel`),
-  **espacio de red** (`graph::Graph<T>`) con generadores Erdős–Rényi,
-  Watts–Strogatz y Barabási–Albert, y **espacio continuo**
-  (`continuous::ContinuousSpace<T>`, vecindad por radio + spatial hashing).
-  Tres paradigmas espaciales —grilla, grafo, continuo— bajo el mismo
-  `Agent`/`Model`.
-- `examples/schelling` — segregación de Schelling (1971).
-- `examples/sir` — SIR espacial (contagio en grilla).
-- `examples/difusion` — feromona depositada por caminantes que difunde
-  (`Grid2D::diffuse`, semántica NetLogo) y se evapora; converge al punto
-  fijo analítico.
-- `examples/network-sir` — contagio SIR **sobre una red** (no una grilla):
-  compara la dinámica epidémica sobre topologías aleatoria, mundo-pequeño y
-  libre de escala. Demuestra que el mismo `Agent`/`Model` corre sobre grafo.
-- `examples/boids` — flocking de Reynolds en el **espacio continuo**: de
-  reglas locales (separación/alineación/cohesión) emerge una bandada
-  (orden de Vicsek 0.02 → 0.96).
-- `examples/sugarscape` — **Sugarscape** (Epstein & Axtell, 1996), el modelo
-  canónico de la economía basada en agentes: agentes que se mueven, cosechan
-  y **mueren** sobre un paisaje de dos picos de azúcar. De una población casi
-  homogénea emerge una distribución de riqueza desigual (Gini 0.24 → 0.42) y
-  la población se autorregula a la capacidad de carga. Ejercita movimiento +
-  muerte de agentes (baja diferida en `after_step`) + paisaje con estado.
-- `examples/life` — Juego de la Vida de Conway, el modelo canónico de
-  **activación simultánea**; sirve de banco para el **`decide` paralelo**
-  (`--bench --parallel --work N`): escala ~5× a 16 hilos cuando la decisión por
-  agente es compute-bound. Ver `validation/SCALABILITY.md`.
-- `models/debris-flow` — **modelo cliente real**: flujos de detritos del
-  evento Atacama 2015 (Copiapó, DEM 5871×5422 @ 30 m), port fiel de
+- `crates/swarm-abm` — the engine: `Agent`/`Model` traits, scheduler
+  (fixed order, random, or **two-phase simultaneous**), `Grid2D` with
+  Moore/Von Neumann neighborhoods and optional torus, per-step
+  `DataCollector` time series, seedable RNG (ChaCha8, portable across
+  platforms), **batch runner** (`batch::run_ensemble` / `run_sweep`) for
+  replicates and parameter sweeps in parallel (rayon, `parallel`
+  feature), **network space** (`graph::Graph<T>`) with Erdős–Rényi,
+  Watts–Strogatz, and Barabási–Albert generators, and **continuous space**
+  (`continuous::ContinuousSpace<T>`, radius-based neighborhood + spatial
+  hashing). Three spatial paradigms — grid, graph, continuous — under the
+  same `Agent`/`Model`.
+- `examples/schelling` — Schelling's segregation model (1971).
+- `examples/sir` — spatial SIR (grid-based contagion).
+- `examples/difusion` — pheromone deposited by walkers that diffuses
+  (`Grid2D::diffuse`, NetLogo semantics) and evaporates; converges to the
+  analytical fixed point.
+- `examples/network-sir` — SIR contagion **on a network** (not a grid):
+  compares epidemic dynamics across random, small-world, and scale-free
+  topologies. Demonstrates that the same `Agent`/`Model` runs on a graph.
+- `examples/boids` — Reynolds flocking in **continuous space**: from local
+  rules (separation/alignment/cohesion) a flock emerges (Vicsek order
+  0.02 → 0.96).
+- `examples/sugarscape` — **Sugarscape** (Epstein & Axtell, 1996), the
+  canonical model of agent-based economics: agents that move, harvest, and
+  **die** on a two-peak sugar landscape. An almost homogeneous population
+  gives rise to unequal wealth distribution (Gini 0.24 → 0.42), and
+  population self-regulates to carrying capacity. Exercises movement +
+  agent death (deferred removal in `after_step`) + a stateful landscape.
+- `examples/life` — Conway's Game of Life, the canonical **simultaneous
+  activation** model; serves as the testbed for **parallel `decide`**
+  (`--bench --parallel --work N`): scales ~5× at 16 threads when per-agent
+  decision is compute-bound. See `validation/SCALABILITY.md`.
+- `models/debris-flow` — **real client model**: debris flows from the
+  Atacama 2015 event (Copiapó, 5871×5422 DEM @ 30 m), a faithful port of
   [debris-flow-abm](https://github.com/franciscoparrao/debris-flow-abm)
-  (Mesa/Python). Paridad distribucional verificada contra el código
-  original sobre insumos idénticos y **~100× más rápido** (130–240 s →
-  1.2–4 s por corrida). En el mejor caso documentado (Chañaral, Config B)
-  reproduce el IoU de referencia con diferencia **< 1 %** (0.468 vs 0.465);
-  detalles en `models/debris-flow/PARITY.md`. Y va más allá: vía un ciclo
-  iterativo de diagnóstico del error → mecanismo faltante → recalibración
-  (expansión en abanico, inicio ponderado por susceptibilidad, y un raster
-  de sedimento derivado con **SurtGIS**), **supera el mejor caso histórico** —
-  IoU 0.468 → **0.555** (+19 %; precision 0.69 → 0.83), un ciclo inviable en
-  Python. Ver `models/debris-flow/PHYSICS_EXPERIMENT.md`.
-  Incluye **calibración por Differential Evolution** (`bin/calibrate`,
-  rayon + stack compartido): lo que en Python era una calibración de
-  ~11–34 h cabe en 1–5 min, y duplica el IoU medio del modelo
-  (0.074 → 0.158) con validación de robustez — ver
-  `models/debris-flow/CALIBRATION.md`. Y un **benchmark de 5
-  metaheurísticas** (`bin/benchmark`: DE/GA/PSO/SA/GWO, N corridas, tests
-  de Friedman + Wilcoxon) — el estudio comparativo que el costo de Python
-  impedía: GWO gana con respaldo estadístico
+  (Mesa/Python). Distributional parity verified against the original code
+  on identical inputs, **~100× faster** (130–240 s → 1.2–4 s per run). In
+  the best documented case (Chañaral, Config B) it reproduces the
+  reference IoU within **< 1 %** (0.468 vs 0.465); details in
+  `models/debris-flow/PARITY.md`. And it goes further: through an
+  iterative diagnose-error → find-missing-mechanism → recalibrate cycle
+  (fan expansion, susceptibility-weighted initiation, and a sediment
+  raster derived with **SurtGIS**), it **beats the best historical
+  case** — IoU 0.468 → **0.555** (+19 %; precision 0.69 → 0.83), a cycle
+  that wasn't feasible in Python. See
+  `models/debris-flow/PHYSICS_EXPERIMENT.md`.
+  Includes **Differential Evolution calibration** (`bin/calibrate`, rayon
+  + a shared stack): what was an ~11–34 h calibration in Python fits in
+  1–5 min, and it doubles the model's mean IoU (0.074 → 0.158) with
+  robustness validation — see `models/debris-flow/CALIBRATION.md`. And a
+  **5-metaheuristic benchmark** (`bin/benchmark`: DE/GA/PSO/SA/GWO, N
+  runs, Friedman + Wilcoxon tests) — the comparative study that Python's
+  cost made impractical: GWO wins with statistical backing
   (`models/debris-flow/BENCHMARK_OPTIM.md`).
 
-## Uso rápido
+## Quick start
 
 ```bash
 cargo test --workspace          # tests + doc-tests
-cargo run --release -p schelling [semilla]
-cargo run --release -p sir [semilla]
-cargo run --release -p difusion [semilla]
+cargo run --release -p schelling [seed]
+cargo run --release -p sir [seed]
+cargo run --release -p difusion [seed]
 ```
 
-Misma semilla → resultados bit a bit idénticos (scheduler y RNG son
-deterministas). Ver el ejemplo de API completo en `crates/swarm-core/src/lib.rs`.
+Same seed → bit-for-bit identical results (scheduler and RNG are
+deterministic). See the full API example in `crates/swarm-abm/src/lib.rs`.
 
-## Bindings Python (PyO3)
+## Python bindings (PyO3)
 
-`crates/swarm-py` expone el motor a Python con la estrategia **modelos nativos
-+ barridos**: los modelos viven compilados en Rust (`swarm-models`) y Python
-solo los configura, los dispara y recibe las series para analizarlas con
-numpy/pandas/matplotlib. El bucle de simulación corre **íntegro en Rust** —se
-conserva el speedup ~45–67× sobre Mesa— y los barridos de parámetros corren en
-paralelo (rayon) liberando el GIL.
+`crates/swarm-py` exposes the engine to Python with a **native models +
+sweeps** strategy: models live compiled in Rust (`swarm-models`), and
+Python only configures them, runs them, and receives the series to
+analyze with numpy/pandas/matplotlib. The simulation loop runs **entirely
+in Rust** — preserving the ~45–67× speedup over Mesa — and parameter
+sweeps run in parallel (rayon), releasing the GIL.
 
 ```bash
 python -m venv .venv && . .venv/bin/activate
@@ -94,43 +94,43 @@ import swarm_abm as sw
 
 m = sw.Sir(size=200, beta=0.15, seed=42)
 m.run(500)
-infected = m.series("i")          # curva de infectados, lista por paso
-print(m.recovered)                # tamaño final de la epidemia
+infected = m.series("i")          # infection curve, one value per step
+print(m.recovered)                # final epidemic size
 
-# barrido paralelo de beta, a velocidad Rust → filas para un DataFrame
+# parallel sweep over beta, at Rust speed → rows for a DataFrame
 rows = sw.sir_sweep(betas=[0.05, 0.1, 0.2], seeds=range(30))
 ```
 
-Misma `(parámetros, semilla)` ⇒ resultado idéntico al binario nativo (paridad
-bit a bit verificada). El crate se construye con maturin y queda fuera del
-`cargo --workspace` (la feature `extension-module` de PyO3 no enlaza libpython).
-Modelos expuestos: `Sir`, `Schelling` y `Sugarscape` (misma API
-`run`/`series`/getters), con un barrido paralelo por modelo (`sir_sweep`,
+Same `(parameters, seed)` ⇒ identical result to the native binary (bit-for-bit
+parity verified). The crate is built with maturin and sits outside
+`cargo --workspace` (PyO3's `extension-module` feature doesn't link
+libpython). Exposed models: `Sir`, `Schelling`, and `Sugarscape` (same
+`run`/`series`/getters API), with a parallel sweep per model (`sir_sweep`,
 `schelling_sweep`, `sugarscape_sweep`).
 
-## Visor WASM (navegador)
+## WASM viewer (browser)
 
-`crates/swarm-wasm` compila el motor a WebAssembly y corre los modelos
-(Schelling, SIR, Sugarscape) sobre un `<canvas>`, sin servidor de cálculo: el
-bucle vive en wasm y JavaScript solo dibuja el buffer RGBA de cada paso. El
-binario pesa ~68 KB y es determinista (misma semilla ⇒ misma corrida, paridad
-con native verificada).
+`crates/swarm-wasm` compiles the engine to WebAssembly and runs the models
+(Schelling, SIR, Sugarscape) on a `<canvas>`, with no compute server: the
+loop lives in wasm and JavaScript only draws each step's RGBA buffer. The
+binary weighs ~68 KB and is deterministic (same seed ⇒ same run, parity
+with native verified).
 
 ```bash
 cd crates/swarm-wasm
 wasm-pack build --target web --out-dir www/pkg --release
-cd www && python3 -m http.server 8000   # abrir http://localhost:8000
+cd www && python3 -m http.server 8000   # open http://localhost:8000
 ```
 
-## Validación: paridad numérica contra Mesa
+## Validation: numerical parity against Mesa
 
-`validation/` contiene espejos exactos de Schelling y SIR escritos en
-[Mesa](https://mesa.readthedocs.io/) (Python) y un protocolo de paridad
-distribucional: 50 réplicas por motor, test z de dos muestras por métrica
-(α = 0.05). Resultado: **las 7 métricas en paridad** (|z| ≤ 1.22); las
-curvas medias de ensamble difieren < 0.021 en todo el horizonte. Detalle
-en `validation/REPORT.md`. En la misma configuración, swarm-core corre
-~67× más rápido que Mesa.
+`validation/` contains exact mirrors of Schelling and SIR written in
+[Mesa](https://mesa.readthedocs.io/) (Python), plus a distributional
+parity protocol: 50 replicates per engine, a two-sample z-test per metric
+(α = 0.05). Result: **all 7 metrics at parity** (|z| ≤ 1.22); mean
+ensemble curves differ by < 0.021 across the whole horizon. Details in
+`validation/REPORT.md`. Under the same configuration, swarm-abm runs
+~67× faster than Mesa.
 
 ```bash
 python3 -m venv validation/.venv
@@ -140,69 +140,70 @@ validation/.venv/bin/pip install -r validation/mesa/requirements.txt
 
 ## Benchmarks
 
-Cross-engine (mismo SIR, medición en proceso, mediana sobre réplicas;
-detalle y entorno en `validation/BENCHMARKS.md`):
+Cross-engine (same SIR, in-process measurement, median over replicates;
+details and environment in `validation/BENCHMARKS.md`):
 
-| Grilla | Agentes | Rust (ms/paso) | Mesa (ms/paso) | Speedup |
+| Grid | Agents | Rust (ms/step) | Mesa (ms/step) | Speedup |
 |---|---|---|---|---|
 | 25×25 | 625 | 0.023 | 1.35 | 58× |
-| 50×50 | 2.500 | 0.142 | 8.23 | 58× |
-| 100×100 | 10.000 | 0.312 | 20.79 | 67× |
-| 200×200 | 40.000 | 1.401 | 63.19 | 45× |
+| 50×50 | 2,500 | 0.142 | 8.23 | 58× |
+| 100×100 | 10,000 | 0.312 | 20.79 | 67× |
+| 200×200 | 40,000 | 1.401 | 63.19 | 45× |
 
-swarm-core sostiene **~25–38 millones de agente-pasos por segundo** en un
-hilo (i7-1270P); con 1 millón de agentes móviles, ~12 M/s (~12 pasos/s
-en vivo). El runner reutiliza el buffer de orden entre pasos y
-`Grid2D::random_neighbor` elige vecino sin asignar memoria — el camino
-caliente del motor no aloca. Microbenchmarks con criterion:
-`cargo bench -p swarm-core` (escalamiento de caminantes 10k→1M, SIR
-end-to-end, Life simultáneo a 37 M celdas/s, `diffuse`). Reproducir el
-cross-engine: `./validation/run_benchmark.sh`.
+swarm-abm sustains **~25–38 million agent-steps per second** on a single
+thread (i7-1270P); with 1 million mobile agents, ~12 M/s (~12 steps/s
+live). The runner reuses the order buffer between steps and
+`Grid2D::random_neighbor` picks a neighbor without allocating — the
+engine's hot path allocates nothing. Microbenchmarks with criterion:
+`cargo bench -p swarm-abm` (walker scaling 10k→1M, end-to-end SIR,
+simultaneous Life at 37 M cells/s, `diffuse`). Reproduce the cross-engine
+numbers: `./validation/run_benchmark.sh`.
 
-## Diseño clave
+## Key design
 
-Los agentes viven en un `AgentSet` dentro del modelo. Para ejecutar
-`Agent::step(&mut self, id, &mut Model, &mut SimRng)` sin conflicto de
-préstamos, el runner usa el patrón **take-out**: saca al agente del set,
-corre su step con acceso mutable al modelo completo, y lo devuelve.
+Agents live in an `AgentSet` inside the model. To run
+`Agent::step(&mut self, id, &mut Model, &mut SimRng)` without a borrow
+conflict, the runner uses the **take-out** pattern: it takes the agent out
+of the set, runs its step with mutable access to the whole model, and
+returns it.
 
-La **activación simultánea** (`Activation::Simultaneous`) usa dos fases
-con garantía del compilador: en `decide(&mut self, id, &Model, rng)` el
-modelo llega *inmutable* — nadie puede escribir estado compartido antes
-del commit en `apply` (a diferencia de Mesa, donde es disciplina del
-usuario). Un modelo escrito como `decide`/`apply` corre bajo cualquier
-política: el `step` por defecto los encadena. Validado con el Juego de
-la Vida (`tests/simultaneous.rs`): el blinker oscila bajo simultánea y
-se rompe bajo secuencial.
+**Simultaneous activation** (`Activation::Simultaneous`) uses two phases
+with a compiler-enforced guarantee: in `decide(&mut self, id, &Model,
+rng)` the model arrives *immutable* — no one can write shared state before
+the commit in `apply` (unlike Mesa, where that's left to user discipline).
+A model written in `decide`/`apply` style runs under any policy: the
+default `step` chains them. Validated with the Game of Life
+(`tests/simultaneous.rs`): the blinker oscillates under simultaneous
+activation and breaks under sequential.
 
-Esa inmutabilidad probada por el compilador es lo que vuelve seguro
-**paralelizar la fase `decide`** (`Simulation::run_parallel`, feature
-`parallel`): cada agente usa un RNG por-agente derivado de `(semilla, paso,
-id)` —no del hilo—, de modo que el resultado es **bit-idéntico** al secuencial
-sin importar cuántos hilos (verificado en `tests/parallel_decide.rs`). Escala
-~5× a 16 hilos en decisiones compute-bound; detalle en
+That compiler-proven immutability is what makes it safe to **parallelize
+the `decide` phase** (`Simulation::run_parallel`, `parallel` feature): each
+agent uses a per-agent RNG derived from `(seed, step, id)` — not from the
+thread — so the result is **bit-identical** to sequential regardless of
+thread count (verified in `tests/parallel_decide.rs`). Scales ~5× at 16
+threads on compute-bound decisions; details in
 `validation/SCALABILITY.md`.
 
 ## Roadmap
 
-**v0.3 (actual) — completado:**
+**v0.3 (current) — complete:**
 
-- [x] Tres espacios: grilla, grafo (Erdős–Rényi/Watts–Strogatz/Barabási–Albert)
-  y continuo (radio + spatial hashing), bajo el mismo `Agent`/`Model`.
-- [x] Batch runs y barrido de parámetros (Rayon, feature `parallel`).
-- [x] Activación simultánea en dos fases con garantía del compilador.
-- [x] Benchmark formal vs Mesa (criterion + protocolo de paridad).
-- [x] Reescritura de `debris-flow-abm` sobre el motor (modelo cliente real).
+- [x] Three spaces: grid, graph (Erdős–Rényi/Watts–Strogatz/Barabási–Albert)
+  and continuous (radius + spatial hashing), under the same `Agent`/`Model`.
+- [x] Batch runs and parameter sweeps (Rayon, `parallel` feature).
+- [x] Two-phase simultaneous activation with a compiler-enforced guarantee.
+- [x] Formal benchmark vs. Mesa (criterion + parity protocol).
+- [x] Rewrite of `debris-flow-abm` on top of the engine (real client model).
 
-**v0.4 (en curso):**
+**v0.4 (in progress):**
 
-- [x] Bindings PyO3 (API Python sobre el motor nativo) — `Sir`, `Schelling` y
-  `Sugarscape` con barridos paralelos.
-- [x] Visor WASM (correr modelos en el navegador) — Schelling, SIR y
-  Sugarscape sobre canvas, binario ~68 KB.
+- [x] PyO3 bindings (Python API over the native engine) — `Sir`,
+  `Schelling`, and `Sugarscape` with parallel sweeps.
+- [x] WASM viewer (run models in the browser) — Schelling, SIR, and
+  Sugarscape on canvas, ~68 KB binary.
 
-Ver el historial completo en [`CHANGELOG.md`](CHANGELOG.md).
+See the full history in [`CHANGELOG.md`](CHANGELOG.md).
 
-## Licencia
+## License
 
 MIT OR Apache-2.0

@@ -250,19 +250,29 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b39cdef0fa800fc44525c84ccb54a029961a8215f9619753635a9c0d2538d46d"
 
 [[package]]
-name = "swarm-core"
+name = "swarm-abm"
 version = "0.3.0"
 dependencies = [
  "rand",
  "rand_chacha",
  "rayon",
+ "swarm-abm-derive",
+]
+
+[[package]]
+name = "swarm-abm-derive"
+version = "0.3.0"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn",
 ]
 
 [[package]]
 name = "swarm-models"
 version = "0.3.0"
 dependencies = [
- "swarm-core",
+ "swarm-abm",
 ]
 
 [[package]]
@@ -270,7 +280,7 @@ name = "swarm-py"
 version = "0.4.0"
 dependencies = [
  "pyo3",
- "swarm-core",
+ "swarm-abm",
  "swarm-models",
 ]
 
