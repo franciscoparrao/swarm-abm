@@ -54,10 +54,20 @@ const FOX_ACT_BASE_WITH_DOG: f64 = 0.30;
 
 const DOG_SPEED_PATROL: f64 = 300.0;
 const DOG_SPEED_CHASE: f64 = 3000.0;
-const DOG_DETECTION_RADIUS: f64 = 400.0;
+/// Radio de detección del perro (zorro que persigue/acecha). Mirror de
+/// `dog.py::DOG_DETECTION_RADIUS` (Mesa, corregido 2026-07-02): antes 400 m,
+/// muy por debajo de `FOX_DOG_DETECTION_RADIUS=1500` (cuánto el zorro percibe
+/// al perro) — esa asimetría dejaba al perro "ciego" ante zorros que ya
+/// habían evaluado el riesgo y decidido cazar, y es la causa identificada del
+/// residual de 2 perros en `PARITY.md` (Mesa ~0%, port 9-21% con 2 perros).
+const DOG_DETECTION_RADIUS: f64 = 1200.0;
 const DOG_CHASE_RADIUS: f64 = 200.0;
 const DOG_PATROL_RADIUS: f64 = 250.0;
 const DOG_DETER_RADIUS: f64 = 50.0;
+/// Magnitud de la protección directa perro→éxito de caza (mirror de
+/// `fox.py::DOG_PROTECTION_STRENGTH`, subido de 0.10 a 0.20 en Mesa
+/// 2026-07-02 junto con el fix de `DOG_DETECTION_RADIUS` de arriba).
+const DOG_PROTECTION_STRENGTH: f64 = 0.20;
 /// Radio de evitación de área: un depredador que percibe un perro dentro de
 /// este radio aborta la cacería si el riesgo supera su aversión. Es el canal
 /// escalable de disuasión (Mesa lo hace vía memoria de zonas peligrosas).
@@ -804,7 +814,7 @@ impl Animal {
         let p_base = self.predation_eff * prey.vulnerability;
         let m_cover = 0.05 * model.veg_cover.get(self.pos);
         let m_dog = match model.nearest_dog_dist(self.pos, 500.0) {
-            Some(dist) => -0.10 * (1.0 - dist / 500.0),
+            Some(dist) => -DOG_PROTECTION_STRENGTH * (1.0 - dist / 500.0),
             None => 0.0,
         };
         // Tamaño de grupo alrededor de la presa.
@@ -857,16 +867,41 @@ impl Animal {
                 model.params.height,
             );
             if best < DOG_CHASE_RADIUS && (self.pos - best_pos).length() < DOG_DETER_RADIUS {
-                // Disuasión: el zorro queda con miedo, pierde apetito y RECUERDA
-                // el lugar como zona peligrosa (memoria que decae a 168 h).
+                // Disuasión multi-objetivo (reduce el residual de 2 perros de
+                // `PARITY.md`: Mesa ~0%, port 9-21%). Antes solo se disuadía al
+                // depredador perseguido (`fox_id`); con varios depredadores
+                // acechando a la vez, un perro solo podía interceptar a uno por
+                // tick y el resto atacaba sin oposición. Ahora la confrontación
+                // con el objetivo también disuade a cualquier OTRO depredador
+                // dentro de `DOG_CHASE_RADIUS` (el mismo radio que ya define
+                // "el perro está en persecución activa" en la condición de
+                // arriba): un depredador que ve a un perro enfrentando a otro a
+                // corta distancia también se ahuyenta, no hace falta que sea
+                // el objetivo específico de la persecución. Probado con
+                // `DOG_DETER_RADIUS` (50 m, el radio de contacto): la mejora
+                // fue nula/negativa (demasiado angosto para que coincidan dos
+                // depredadores); con `DOG_CHASE_RADIUS` (200 m) sí reduce el
+                // residual de forma consistente (ver `PARITY.md`).
+                let mut deterred: Vec<(AgentId, Vec2)> = vec![(fox_id, best_pos)];
+                model
+                    .space
+                    .for_each_within(self.pos, DOG_CHASE_RADIUS, |_, npos, snap, _| {
+                        if snap.alive && snap.species == Species::Fox && snap.id != fox_id {
+                            deterred.push((snap.id, npos));
+                        }
+                    });
                 let now = model.step_count;
-                if let Some(fox) = model.agents.get_mut(fox_id) {
-                    fox.fear = 1.0;
-                    fox.hunger = 0.0; // ahuyentado: deja de cazar hasta volver a tener hambre
-                    fox.stalk_target = None; // pierde la presa que acechaba
-                    fox.danger_zones.push((best_pos, now));
-                    if fox.danger_zones.len() > 64 {
-                        fox.danger_zones.remove(0);
+                for (id, pos) in deterred {
+                    // El zorro queda con miedo, pierde apetito y RECUERDA el
+                    // lugar como zona peligrosa (memoria que decae a 168 h).
+                    if let Some(fox) = model.agents.get_mut(id) {
+                        fox.fear = 1.0;
+                        fox.hunger = 0.0; // ahuyentado: deja de cazar hasta volver a tener hambre
+                        fox.stalk_target = None; // pierde la presa que acechaba
+                        fox.danger_zones.push((pos, now));
+                        if fox.danger_zones.len() > 64 {
+                            fox.danger_zones.remove(0);
+                        }
                     }
                 }
             }

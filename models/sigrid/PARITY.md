@@ -1,5 +1,65 @@
 # Paridad SIGRID: port Rust (swarm-abm) vs modelo Mesa original
 
+## Reducción del residual de 2 perros — 2026-07-03
+
+Al revisar el pendiente "cerrar el residual de 2 perros" se encontró que el
+modelo **Mesa de referencia cambió muy recientemente** bajo nuestros pies:
+`Isla_Riesco/simulacion_agentes/agents/dog.py` (editado 2026-07-03) y `fox.py`
+(editado 2026-07-02, después de que se generó el caché `parity_d14.npz` que
+usa la sección "Re-validación" de abajo como línea base Mesa). El propio
+comentario de `dog.py` describe exactamente el mecanismo que este documento
+ya había diagnosticado como causa del residual: una asimetría de escala
+donde el zorro percibe al perro a `FOX_DOG_DETECTION_RADIUS=1500` m pero el
+perro solo detectaba al zorro a 400 m, dejándolo "ciego" ante depredadores
+que ya habían decidido cazar. Ana lo corrigió en Mesa subiendo
+`DOG_DETECTION_RADIUS` a 1200 m y `DOG_PROTECTION_STRENGTH` (magnitud de la
+protección directa perro→éxito de caza) de 0.10 a 0.20.
+
+**Cambios aplicados al port** (`models/sigrid/src/lib.rs`):
+1. **Espejo del fix de Mesa**: `DOG_DETECTION_RADIUS` 400→1200 m,
+   `DOG_PROTECTION_STRENGTH` 0.10→0.20 (mismos valores y misma fórmula que
+   Mesa: `m_dog = -DOG_PROTECTION_STRENGTH * (1 - dist/DOG_PROTECTION_RADIUS)`).
+2. **Disuasión multi-objetivo** (el ítem original del pendiente): antes,
+   cuando el perro llegaba a interceptar a su objetivo, solo ESE depredador
+   quedaba disuadido — con varios depredadores acechando a la vez, el perro
+   solo podía intervenir sobre uno por tick. Ahora la confrontación también
+   disuade a cualquier otro depredador dentro de `DOG_CHASE_RADIUS` (200 m),
+   no solo al perseguido. Probado primero con el radio de contacto
+   (`DOG_DETER_RADIUS`, 50 m): la mejora fue nula/negativa (muy angosto para
+   que coincidan dos depredadores). Con 200 m sí ayuda de forma consistente.
+
+**Medición** — no es una re-validación de paridad completa contra Mesa (el
+caché Mesa quedó desactualizado por los cambios de Ana; re-correrlo toma
+~40 min y queda como pendiente, ver abajo). Es una comparación **interna**
+Rust antes/después, mismas semillas, n=30 y luego n=60 por punto (los 4
+puntos de 2 perros del diseño factorial de 12 puntos, 14 días):
+
+| fox_eff | chilla | Antes (residual doc., re-validación) | Solo espejo de Mesa (n=30) | + multi-objetivo @200m (n=60) |
+|---:|---:|---:|---:|---:|
+| 0.08 | 0  | ~14-21% | 9.15% | **6.34%** |
+| 0.08 | 10 | ~14-21% | 13.06% | **6.73%** |
+| 0.26 | 0  | ~14-21% | 11.25% | **12.57%** |
+| 0.26 | 10 | ~14-21% | 12.99% | **10.03%** |
+
+El espejo del fix de Mesa por sí solo ya reduce el residual en los 4 puntos
+(confirmado con n=30, la muestra de n=5 inicial dio señal mixta por puro
+ruido — sd~7-19 con n=5 vs diferencias de 1-5pp). La disuasión
+multi-objetivo @200m suma una reducción adicional en 3 de 4 puntos (el
+cuarto, fox_eff=0.26/chilla=0, queda esencialmente plano). Media de los 4
+puntos: 11.61% (solo espejo) → 8.92% (+ multi-objetivo), frente al ~14-21%
+documentado antes y al ~0% de Mesa. **El residual se redujo a aproximadamente
+la mitad, no se cerró del todo.**
+
+**Pendiente real**: la comparación de arriba es Rust-contra-Rust, no
+Rust-contra-Mesa-actual. Con `dog.py`/`fox.py` cambiados, el `Mesa ~0%`
+documentado en este archivo también podría haberse movido. Para una
+conclusión de paridad honesta hace falta re-correr
+`Isla_Riesco/experiments/parity.py --reps 5 --days 14` **sin** `--reuse-mesa`
+(la carga del lado Mesa actual toma ~40 min en la corrida completa de 12
+puntos) y comparar contra el port ya actualizado. No se corrió en esta
+sesión por el costo de tiempo; los cambios de código y la medición interna
+sí quedan validados (`cargo test -p sigrid`, 4/4 ok).
+
 ## Migración a Sobol nativo (`swarm_abm::experiment`) — 2026-07-02
 
 El análisis de sensibilidad global (Sobol N=512/30 días, sección siguiente)
@@ -189,9 +249,16 @@ Evolución del tuning: simple proximidad (RMSE 14.2, sesgo +6.5) → +memoria
   perro intercepte, como en Mesa.
 - **Residual menor: 2 perros.** Mesa ~0 %; el port ~9-19 %. Los 2 perros no
   alcanzan a disuadir a todos los depredadores que acechan a la vez (cada perro
-  persigue a uno por tick). Cerrarlo del todo requeriría disuasión multi-objetivo
-  por perro o más perros — efecto de segundo orden sobre un residual ya chico.
+  persigue a uno por tick). **Actualización 2026-07-03** (ver sección al inicio
+  de este documento, "Reducción del residual de 2 perros"): espejar un fix de
+  Mesa (radio/magnitud de disuasión del perro) + disuasión multi-objetivo lo
+  redujo a la mitad (~9-13%, medido internamente Rust-contra-Rust), sin
+  cerrarlo del todo — pendiente re-validar contra Mesa actual.
 - Probado y descartado: radio de evitación 1000 m (regresó y disparó varianza).
+- Probado y descartado (2026-07-03): disuasión multi-objetivo con el radio de
+  contacto (`DOG_DETER_RADIUS`, 50 m) — demasiado angosto para que coincidan
+  dos depredadores, mejora nula/negativa. Con `DOG_CHASE_RADIUS` (200 m) sí
+  funciona.
 
 ## Implicación para el ranking del Sobol (N=512, 30 días)
 
