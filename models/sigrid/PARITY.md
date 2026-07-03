@@ -1,5 +1,49 @@
 # Paridad SIGRID: port Rust (swarm-abm) vs modelo Mesa original
 
+## Migración a Sobol nativo (`swarm_abm::experiment`) — 2026-07-02
+
+El análisis de sensibilidad global (Sobol N=512/30 días, sección siguiente)
+se corrió con un arnés híbrido: `Isla_Riesco/experiments/sobol_rust.py`
+muestreaba (Saltelli, SALib) y analizaba (S1/ST, SALib) en Python; solo la
+evaluación —la parte cara— corría en Rust vía el binario `sobol_eval.rs`.
+Ese arnés queda **superseded** por `models/sigrid/src/bin/sobol_native.rs`
+(binario `sobol-native`), que usa `swarm_abm::experiment` (cerrado en
+P3-4 de `docs/AUDIT.md`) para hacer las tres etapas —muestreo Saltelli,
+evaluación, S1/ST con bootstrap— en Rust puro. No hay Python en el camino
+del análisis de sensibilidad.
+
+`sobol_eval.rs` (el evaluador por CSV) **no se elimina**: lo sigue usando
+`Isla_Riesco/experiments/parity.py` para la comparación punto a punto contra
+Mesa (12 puntos factoriales fijos, no un diseño de muestreo), que es una
+tarea distinta de la del Sobol.
+
+**Validación del reemplazo** — corrida `sobol-native --n 64 --days 30`
+(512 evaluaciones; el esquema del motor no calcula índices de segundo orden,
+así que a igual `N` evalúa `N·(d+2)` puntos, la mitad que el `N·(2d+2)` de
+SALib con `calc_second_order=True` — no es una comparación 1:1 en `N`, pero
+sí en la conclusión):
+
+| Parámetro (ST) | Híbrido SALib+Rust (N=512, 7168 evals) | Nativo `sobol-native` (N=64, 512 evals) |
+|---|---:|---:|
+| n_dogs | 1.04 [0.955, 1.125] | **1.08** [0.837, 1.340] |
+| sheep_density | 0.41 | 0.45 |
+| chilla_density | 0.43 | 0.24 |
+| lamb_proportion | 0.37 | 0.30 |
+| fox_predation_effectiveness | 0.35 | 0.28 |
+| hare_density | 0.36 | 0.37 |
+
+El hallazgo central sobrevive con una muestra ~14× más chica: `n_dogs`
+domina con claridad (ST≈1.0-1.1, intervalos de confianza solapados entre
+ambos métodos) y sin solape con el segundo lugar. El orden dentro del grupo
+secundario (`sheep_density`/`chilla_density`/`lamb_proportion`/
+`fox_predation_effectiveness`/`hare_density`) sí cambia entre corridas —
+esperable con `N` catorce veces menor, esos cinco efectos ya eran
+comparables entre sí en la corrida grande (0.35-0.43). No se recomienda usar
+`N=64` para las conclusiones del ranking secundario; sirve como validación
+de que el motor nativo reproduce el resultado dominante, no como reemplazo
+de la corrida N=512 documentada abajo (que se mantiene como la referencia
+del ranking).
+
 ## Re-validación 2026-07-02 (motor post P0-2/P0-3/P1-1)
 
 Los números originales de este documento (Pearson 0.966, RMSE 10.1, Sobol

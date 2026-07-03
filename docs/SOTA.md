@@ -174,8 +174,12 @@ negación explícita. Resto de celdas: conocimiento sin verificar.
   - Índice espacial: se reconstruyó `ContinuousSpace` cada paso (handles
     `PointId` sin constructor estable) y `for_each_within` aloca un `HashSet`
     por llamada.
-  - Sin diseño de experimentos nativo: el Sobol se hizo con SALib por fuera
-    (`sobol_eval` en Rust como evaluador, SALib en Python muestrea/analiza).
+  - Sin diseño de experimentos nativo (histórico): el Sobol se hizo con SALib
+    por fuera (`sobol_eval` en Rust como evaluador, SALib en Python
+    muestrea/analiza). Cerrado por P3-4 (`swarm_abm::experiment`) y
+    adoptado en SIGRID (`sobol-native`, ver `models/sigrid/PARITY.md`):
+    muestreo Saltelli + evaluación + S1/ST con bootstrap, todo en Rust, sin
+    Python en el camino.
 
 ## Brechas y oportunidades (priorizadas)
 

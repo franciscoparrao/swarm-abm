@@ -41,7 +41,12 @@ conclusiones científicas no).
     `latin_hypercube`/`morris`, con análisis de sensibilidad global
     (S1 de Saltelli 2010, ST de Jansen 1999, bootstrap 95% CI), validado
     contra la función de Ishigami (índices analíticos conocidos).
-    Internaliza el arnés híbrido SALib+Rust que usaba SIGRID.
+    Internaliza el arnés híbrido SALib+Rust que usaba SIGRID: el modelo
+    migró a él (`models/sigrid/src/bin/sobol_native.rs`, binario
+    `sobol-native`), reemplazando `Isla_Riesco/experiments/sobol_rust.py` —
+    muestreo Saltelli, evaluación y S1/ST con bootstrap, todo en Rust, sin
+    Python en el camino del análisis de sensibilidad (ver
+    `models/sigrid/PARITY.md`).
   - `#[derive(MultiAgent)]` (crate `swarm-abm-derive`, macro procedural):
     heterogeneidad de agentes vía `enum` sin campos muertos ni trait
     objects — el despacho sigue siendo un `match` estático.

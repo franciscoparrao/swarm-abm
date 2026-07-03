@@ -13,6 +13,9 @@ rayon = { workspace = true, optional = true }
 [features]
 default = []
 parallel = ["dep:rayon", "swarm-abm/parallel"]
+# Análisis de sensibilidad de Sobol' nativo (`sobol-native`): muestreo,
+# evaluación y análisis en Rust, sin SALib/Python. Ver swarm_abm::experiment.
+experiment = ["swarm-abm/experiment"]
 
 [lib]
 name = "sigrid"
@@ -24,3 +27,8 @@ path = "src/main.rs"
 [[bin]]
 name = "sobol-eval"
 path = "src/bin/sobol_eval.rs"
+
+[[bin]]
+name = "sobol-native"
+path = "src/bin/sobol_native.rs"
+required-features = ["experiment"]
