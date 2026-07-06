@@ -318,4 +318,67 @@ mod tests {
             panic!("agente no encontrado");
         }
     }
+
+    /// El despacho de `stage` para un enum `MultiAgent` no estaba generado
+    /// (hallazgo de auditoría): un modelo heterogéneo bajo
+    /// `Activation::Staged` heredaba el no-op por defecto del trait en
+    /// silencio, sin error de compilación ni de runtime. Dos tipos mínimos
+    /// que solo implementan `stage` (no `step`) verifican que ahora sí se
+    /// despacha a la variante interna correcta.
+    #[test]
+    fn el_despacho_de_multiagent_incluye_stage() {
+        struct Tiny(AgentSet<Mixed>);
+        impl Model for Tiny {
+            type Agent = Mixed;
+            fn agents(&self) -> &AgentSet<Mixed> {
+                &self.0
+            }
+            fn agents_mut(&mut self) -> &mut AgentSet<Mixed> {
+                &mut self.0
+            }
+        }
+
+        struct Counter(u32);
+        struct Doubler(u32);
+
+        impl Agent for Counter {
+            type Model = Tiny;
+            fn stage(&mut self, stage: usize, _id: AgentId, _model: &mut Tiny, _rng: &mut SimRng) {
+                if stage == 0 {
+                    self.0 += 1;
+                }
+            }
+        }
+        impl Agent for Doubler {
+            type Model = Tiny;
+            fn stage(&mut self, stage: usize, _id: AgentId, _model: &mut Tiny, _rng: &mut SimRng) {
+                if stage == 1 {
+                    self.0 *= 2;
+                }
+            }
+        }
+
+        #[derive(MultiAgent)]
+        enum Mixed {
+            Counter(Counter),
+            Doubler(Doubler),
+        }
+
+        let mut agents = AgentSet::new();
+        let cid = agents.insert(Mixed::Counter(Counter(0)));
+        let did = agents.insert(Mixed::Doubler(Doubler(3)));
+
+        let mut sim =
+            Simulation::new(Tiny(agents), 1).with_schedule(Schedule::new(Activation::Staged(2)));
+        sim.run(1);
+
+        let Mixed::Counter(c) = sim.model.0.get(cid).unwrap() else {
+            unreachable!()
+        };
+        let Mixed::Doubler(d) = sim.model.0.get(did).unwrap() else {
+            unreachable!()
+        };
+        assert_eq!(c.0, 1, "Counter.stage(0) debe correr vía el enum");
+        assert_eq!(d.0, 6, "Doubler.stage(1) debe correr vía el enum");
+    }
 }

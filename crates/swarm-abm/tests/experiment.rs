@@ -184,3 +184,84 @@ fn morris_produce_estadisticas_por_parametro_y_es_determinista() {
     let mu_stars2: Vec<f64> = repetir.iter().map(|r| r.mu_star).collect();
     assert_eq!(mu_stars, mu_stars2, "determinista dada la semilla");
 }
+
+/// Regresión (hallazgo de auditoría): antes, cada punto del diseño recibía
+/// una semilla derivada de su posición GLOBAL en el arreglo aplanado, así
+/// que `A[j]` y `AB_i[j]` corrían con RNG independiente entre sí. Para un
+/// modelo estocástico eso infla `ST` de un parámetro inerte con puro ruido
+/// (`E[(y_A-y_AB_i)²] = Δ_i + 2σ²_ruido`), algo que el test de Ishigami
+/// (determinista, ignora la semilla) no puede detectar. Este modelo SÍ usa
+/// la semilla (agrega ruido puro, independiente del punto); con *common
+/// random numbers* correctas, `A[j]` y `AB_dummy[j]` comparten semilla — la
+/// única columna que cambia entre ambos es el parámetro `dummy`, que el
+/// modelo ignora — así que deben dar el resultado EXACTO, no solo similar,
+/// y `ST[dummy]` debe ser 0.0 exacto en vez de espuriamente positivo.
+#[test]
+fn sobol_usa_common_random_numbers_para_parametro_inerte() {
+    struct NoisyAgent;
+    impl Agent for NoisyAgent {
+        type Model = Noisy;
+    }
+    struct Noisy {
+        value: f64,
+        agents: AgentSet<NoisyAgent>,
+    }
+    impl Model for Noisy {
+        type Agent = NoisyAgent;
+        fn agents(&self) -> &AgentSet<NoisyAgent> {
+            &self.agents
+        }
+        fn agents_mut(&mut self) -> &mut AgentSet<NoisyAgent> {
+            &mut self.agents
+        }
+    }
+    fn noisy_build(point: &[f64], seed: u64) -> Simulation<Noisy> {
+        let mut rng = rng_from_seed(seed);
+        let noise = uniform_f64(&mut rng); // ruido puro: independiente de `point`
+        Simulation::new(
+            Noisy {
+                value: point[0] + noise, // solo "real" (point[0]) tiene efecto
+                agents: AgentSet::new(),
+            },
+            0,
+        )
+    }
+    fn noisy_outcome(sim: &Simulation<Noisy>) -> f64 {
+        sim.model.value
+    }
+
+    let specs = vec![
+        ParamSpec::new("real", 0.0, 1.0),
+        ParamSpec::new("dummy", 0.0, 1.0),
+    ];
+    let design = sobol(&specs, 256);
+    let result = design.run(1, 0, 0, noisy_build, noisy_outcome);
+
+    let idx = result
+        .names
+        .iter()
+        .position(|n| n == "dummy")
+        .expect("dummy presente");
+    assert!(
+        result.st[idx] < 1e-9,
+        "ST[dummy] = {:.6}, esperado ~0 exacto bajo common random numbers \
+         (si esto falla, A[j] y AB_dummy[j] volvieron a usar semillas distintas)",
+        result.st[idx]
+    );
+}
+
+/// Regresión: `n_boot = 0` hacía `panic!` por underflow de `usize` en
+/// `percentile` (slice de bootstrap vacío). Ahora degrada a `(NaN, NaN)`
+/// en vez de crashear; los puntuales `s1`/`st` siguen siendo válidos (no
+/// dependen del bootstrap).
+#[test]
+fn sobol_con_n_boot_cero_no_panica() {
+    let specs = ishigami_specs();
+    let result = sobol(&specs, 64).run(3, 0, 0, build, outcome);
+    for i in 0..3 {
+        assert!(result.s1[i].is_finite());
+        assert!(result.st[i].is_finite());
+        assert!(result.s1_conf[i].0.is_nan() && result.s1_conf[i].1.is_nan());
+        assert!(result.st_conf[i].0.is_nan() && result.st_conf[i].1.is_nan());
+    }
+}

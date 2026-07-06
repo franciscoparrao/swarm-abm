@@ -93,8 +93,8 @@ fn checkpoint_y_restore_es_bit_identico_a_no_interrumpir() {
         seed_guardado,
         rng_restaurado,
         pasos_guardados,
-    )
-    .with_schedule(Schedule::new(Activation::Random));
+        Schedule::new(Activation::Random),
+    );
     resumida.run(10);
 
     assert_eq!(
@@ -109,6 +109,48 @@ fn checkpoint_y_restore_es_bit_identico_a_no_interrumpir() {
     );
 }
 
+/// Reproduce el escenario exacto de la auditoría (docs/AUDIT.md): antes,
+/// `from_checkpoint` fijaba siempre `Schedule::default()` (Random),
+/// ignorando en silencio la política real de la simulación original. Con
+/// `Activation::Ordered` (que además, a diferencia de Random, no consume
+/// RNG del stream de pasos para barajar), ese bug habría barajado el orden
+/// de reanudación y consumido `SimRng` de más, divergiendo de la corrida
+/// sin interrumpir. `from_checkpoint` ahora exige el `Schedule` como
+/// parámetro — este test verifica que pasar el original (`Ordered`)
+/// preserva la bit-exactitud.
+#[test]
+fn checkpoint_respeta_el_schedule_ordered_original() {
+    let seed = 55;
+    let schedule = Schedule::new(Activation::Ordered);
+
+    let mut sin_interrumpir = Simulation::new(build(seed), seed).with_schedule(schedule);
+    sin_interrumpir.run(20);
+
+    let mut sim = Simulation::new(build(seed), seed).with_schedule(schedule);
+    sim.run(10);
+
+    let model_json = serde_json::to_string(&sim.model).expect("modelo serializable");
+    let rng_json = serde_json::to_string(sim.rng_state()).expect("rng serializable");
+    let modelo_restaurado: World =
+        serde_json::from_str(&model_json).expect("modelo deserializable");
+    let rng_restaurado: SimRng = serde_json::from_str(&rng_json).expect("rng deserializable");
+
+    let mut resumida = Simulation::from_checkpoint(
+        modelo_restaurado,
+        sim.seed(),
+        rng_restaurado,
+        sim.step_count(),
+        schedule,
+    );
+    resumida.run(10);
+
+    assert_eq!(
+        huella(&sin_interrumpir.model),
+        huella(&resumida.model),
+        "el checkpoint debe reanudar bit-exactamente bajo Ordered, no solo bajo el Random por defecto"
+    );
+}
+
 #[test]
 fn from_checkpoint_no_recolecta_el_paso_0_de_nuevo() {
     // El estado inicial ya se capturó en la sesión "anterior" (antes del
@@ -119,8 +161,13 @@ fn from_checkpoint_no_recolecta_el_paso_0_de_nuevo() {
     sim.run(5);
     let steps_previos = sim.step_count();
 
-    let mut resumida =
-        Simulation::from_checkpoint(build(seed), seed, rng_from_seed(seed), steps_previos);
+    let mut resumida = Simulation::from_checkpoint(
+        build(seed),
+        seed,
+        rng_from_seed(seed),
+        steps_previos,
+        Schedule::default(),
+    );
     resumida.add_reporter("dummy", |_: &World| 0.0);
     resumida.run(3);
     // No hay una fila re-etiquetada como "paso 0"/`steps_previos`: la

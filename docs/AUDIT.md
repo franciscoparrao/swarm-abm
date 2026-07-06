@@ -44,6 +44,94 @@ sección "Veredicto general" original más abajo para el diagnóstico *inicial*
 que motivó todo este trabajo (se conserva sin editar como registro histórico
 de dónde se partió).
 
+## Auditoría de seguimiento — 2026-07-05
+
+Con los 18 ítems anteriores cerrados, se hizo una segunda pasada (4 agentes
+de lectura independientes, uno por subsistema: RNG+`sim`, arena de
+agentes+macro `MultiAgent`, los tres espacios, `experiment`+`data`+`batch`)
+buscando **defectos nuevos**, no re-auditar lo ya resuelto. Cada hallazgo se
+verificó por lectura directa del código y, cuando fue posible, con un test
+desechable que reprodujo el defecto antes de escribir el fix definitivo.
+
+| Ítem | Severidad | Estado | Hallazgo |
+|------|-----------|--------|----------|
+| F1 | Alto | ✅ **Resuelto** | La macro `#[derive(MultiAgent)]` no despachaba `Agent::stage` — un enum multi-especie bajo `Activation::Staged` heredaba el no-op por defecto en silencio (sin error de compilación ni de runtime). |
+| F2 | Alto | ✅ **Resuelto** | `Simulation::from_checkpoint` fijaba siempre `Schedule::default()` (Random), ignorando en silencio el schedule real de la simulación original — el resume no era bit-exacto para `Ordered`/`Simultaneous`/`Staged`. |
+| F3 | Alto (impacto científico) | ✅ **Resuelto** | `experiment::sobol` asignaba una semilla derivada de la posición GLOBAL de cada punto, así que `A[j]`, `B[j]` y cada `AB_i[j]` corrían con RNG independiente. Para un ABM estocástico esto infla `ST` de parámetros inertes con ruido puro (viola *common random numbers*, un requisito del esquema de Saltelli). El test de Ishigami (determinista) no podía detectarlo. |
+| F4 | Medio | ✅ **Resuelto** | El primer punto de la secuencia Sobol' (crate `sobol`) es el origen `[0,…,0]`: sin `.skip(1)`, `A[0]==B[0]` (ambos al corner inferior) y `AB_i[0]==A[0]`, sesgando O(1/n) el denominador `V(Y)` y la fila 0 de cada índice. |
+| F5 | Medio | ✅ **Resuelto** | `Grid2D::neighbor_positions_r` con `Neighborhood::VonNeumann` + torus + `2r+1 > dim`: el filtro de distancia Manhattan usaba el offset pre-wrap relativo a la ventana acotada, no la distancia toroidal real — sub-incluía vecinos (confirmado: 5×5 torus, r=3, devolvía 16 de los 20 vecinos reales). |
+| F6 | Medio | ✅ **Resuelto** | `sobol_indices_with_bootstrap` con `n_boot=0` hacía `panic!` por underflow de `usize` en `percentile` (slice de bootstrap vacío) en vez de degradar. |
+
+**F1 — fix.** `swarm-abm-derive/src/lib.rs`: la macro ahora genera también el
+brazo de `stage` (mismo patrón `match` estático que `decide`/`apply`/`step`).
+`decide_with_peers` se dejó **deliberadamente sin dispatch**: la variante
+interna espera `peers: &AgentSet<TipoInterno>` (p. ej. `&AgentSet<Fox>`), el
+enum recibiría `&AgentSet<Enum>` — son tipos distintos, no hay forma
+mecánica de reenviar. Documentado como limitación explícita en el rustdoc
+del macro en vez de fingir que se resuelve. Test de regresión:
+`examples/multi-agent` (`el_despacho_de_multiagent_incluye_stage`), dos
+tipos mínimos que solo implementan `stage` bajo `Activation::Staged(2)`.
+
+**F2 — fix.** `crates/swarm-abm/src/sim.rs`: `from_checkpoint` pasa a exigir
+`Schedule` como parámetro obligatorio (antes fijaba el default en silencio).
+Docstring corregido ("cuatro piezas" → "cinco piezas"). Test de regresión en
+`tests/checkpoint.rs` (`checkpoint_respeta_el_schedule_ordered_original`):
+checkpoint de una simulación `Ordered`, confirma resume bit-exacto — fallaba
+con el código anterior.
+
+**F3 — fix.** `crates/swarm-abm/src/experiment.rs`: la derivación de semilla
+por punto pasó de `base_seed.wrapping_add(idx_global)` a una función
+`row_seed(family, row)` que reutiliza `child_rng` (ya validado, sin tocar
+`rng.rs`): familia `0` para `A`/todos los `AB_i` (mismo seed, ya que solo
+difieren en una columna) y familia `1` para `B` (seed independiente,
+decorrelacionado). Test de regresión en `tests/experiment.rs`
+(`sobol_usa_common_random_numbers_para_parametro_inerte`): un modelo que
+agrega ruido puro (independiente del punto) confirma `ST[dummy] < 1e-9`
+(antes, con semillas independientes, habría sido espuriamente positivo).
+
+**F4 — fix.** `crates/swarm-abm/src/experiment.rs`, función `sobol()`:
+`sobol::Sobol::new(2*d, &params).skip(1)` en vez de tomar la secuencia desde
+el punto 0 — mismo tratamiento que SALib para esta propiedad conocida de la
+secuencia.
+
+**F5 — fix.** `crates/swarm-abm/src/grid.rs`, `NeighborsR::next`: para
+`VonNeumann`, cuando el grid es toroidal se recalcula la distancia real por
+eje (`torus_dist(delta, dim) = min(delta.rem_euclid(dim), dim -
+delta.rem_euclid(dim))`) antes de sumar para el filtro Manhattan, en vez de
+usar el offset crudo relativo a la ventana acotada. `Moore` no estaba
+afectado (no filtra por distancia — correcto porque cuando el acotamiento
+por torus se activa, el radio ya cubre la dimensión entera). Test de
+regresión: `neighbor_positions_r_von_neumann_torus_radio_grande_no_sub_incluye`
+(5×5 torus, r=3, verifica el conjunto exacto de 20 vecinos vs. fuerza bruta).
+
+**F6 — fix.** `crates/swarm-abm/src/experiment.rs`, función `percentile`:
+guarda `sorted.is_empty()` y devuelve `f64::NAN` en vez de indexar con
+`sorted.len() - 1` (que subdesborda a `usize::MAX` cuando `len()==0`). Con
+`n_boot=0`, `s1`/`st` (puntuales) siguen siendo válidos; `s1_conf`/`st_conf`
+pasan a ser `(NaN, NaN)` en vez de crashear. Test de regresión:
+`sobol_con_n_boot_cero_no_panica`.
+
+**Verificación de cierre**: `cargo build`/`clippy --all-features -D
+warnings`/`test --workspace --all-features`/`fmt --all --check` en verde
+tras los 6 fixes (69 tests unitarios en `swarm-abm`, +6 en
+`tests/experiment.rs`, +3 en `tests/checkpoint.rs`, +3 en `multi-agent`).
+Ningún consumidor externo de `from_checkpoint` fuera de
+`tests/checkpoint.rs` (confirmado por grep en el repo, incluidos
+`swarm-py`/`swarm-wasm`).
+
+**Pendiente de esta pasada** (severidad baja/documentación, no bloqueante):
+wedge par==seq sobreafirmado en el rustdoc de `decide_all_par` (`&Model` no
+prohíbe mutabilidad interior tipo `Atomic*`/`Mutex` bajo `Sync`; falta
+convertirlo de "el compilador lo garantiza" a una precondición explícita);
+la macro `MultiAgent` ignora genéricos/lifetimes del enum contenedor (falta
+`split_for_impl`); wraparound de generación `u32` en `AgentSet`/
+`ContinuousSpace` no documentado (la doc dice "never", en realidad "hasta
+2³² reúsos del mismo slot"); `Grid2D::diffuse` aloca un `Vec` por paso pese a
+decir "internal double buffer" (ya era P2-1 del backlog original); `Morris`
+con `levels` impar cae fuera de grilla; reporter agregado a media corrida
+desalinea el eje de pasos; `to_csv` emite tokens `NaN`/`inf` no estándar;
+posiciones no finitas en `ContinuousSpace` desaparecen en silencio.
+
 ## Veredicto general
 
 El motor es pequeño, limpio y honesto: cero `unsafe`, `#![warn(missing_docs)]`

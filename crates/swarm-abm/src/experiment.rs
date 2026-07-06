@@ -38,8 +38,9 @@
 //!   variant covers 100 dimensions; the Saltelli scheme uses `2·d`).
 
 use crate::model::Model;
-use crate::rng::{rng_from_seed, shuffle, uniform_below, uniform_f64};
+use crate::rng::{child_rng, rng_from_seed, shuffle, uniform_below, uniform_f64};
 use crate::sim::Simulation;
+use rand::RngCore;
 
 /// Specification of a parameter: sampled uniformly in `[low, high]`.
 #[derive(Debug, Clone)]
@@ -163,7 +164,14 @@ pub fn sobol(specs: &[ParamSpec], n: usize) -> SobolDesign {
         "sobol supports 1 to 50 parameters, {d} were requested"
     );
     let params = sobol::params::JoeKuoD6::minimal();
-    let seq = sobol::Sobol::<f64>::new(2 * d, &params);
+    // `.skip(1)`: the `sobol` crate's iterator yields the all-zeros origin
+    // as its first point. Splitting that point at `d` would give `A[0]` and
+    // `B[0]` (and every `AB_i[0]`) the identical lower-corner value —
+    // contaminating the `V(Y)` denominator with a duplicated point and
+    // biasing row 0 of every S1/ST sum. The bias is O(1/n) (invisible at
+    // large n, real at small n); skip it, matching SALib's own handling of
+    // this same Sobol' sequence property.
+    let seq = sobol::Sobol::<f64>::new(2 * d, &params).skip(1);
     let mut a = Vec::with_capacity(n);
     let mut b = Vec::with_capacity(n);
     for point in seq.take(n) {
@@ -203,12 +211,29 @@ impl SobolDesign {
     /// replaced by `B`'s) and computes S1/ST with bootstrap.
     ///
     /// `build` receives the point (`&[f64]`, in the order of `specs`) and a
-    /// seed derived deterministically from the point's index in the design —
+    /// seed derived deterministically from `base_seed` and the point's row —
     /// same base seed ⇒ same design evaluated exactly the same way. `n_boot`
     /// is the number of bootstrap resamples (500 is a reasonable default; more
     /// gives more stable intervals at the cost of more computation — the
     /// bootstrap only recomputes the closed-form formula over evaluations
-    /// already made, it does not re-run the model).
+    /// already made, it does not re-run the model). `n_boot == 0` skips the
+    /// bootstrap entirely: `s1`/`st` are still the real point estimates, but
+    /// `s1_conf`/`st_conf` come back as `(NaN, NaN)` rather than a
+    /// meaningless interval from zero resamples.
+    ///
+    /// **Common random numbers.** `A[j]` and every `AB_i[j]` (`i` in
+    /// `0..d`) share the exact same seed — they differ from each other only
+    /// in parameter `i`, so any difference in their outcome is attributable
+    /// to that parameter, not to a different stochastic realization of the
+    /// model. `B[j]` gets an independent seed (derived with a different
+    /// domain tag), decorrelating it from `A[j]`/`AB_i[j]` as the Saltelli
+    /// scheme requires. Without CRN pairing, the Jansen ST estimator
+    /// `E[(y_A − y_AB_i)²]` conflates the parameter's effect with pure
+    /// stochastic noise (`Δ_i + 2σ²_noise`), spuriously inflating ST for
+    /// models where `step` consumes randomness — even for a parameter with
+    /// no real effect. A deterministic `outcome` (like this module's own
+    /// Ishigami validation) is invariant to this pairing, which is why that
+    /// test alone couldn't have caught the earlier per-index-only seeding.
     pub fn run<M, B, O>(
         &self,
         base_seed: u64,
@@ -225,22 +250,31 @@ impl SobolDesign {
         let d = self.specs.len();
         let n = self.n;
 
-        let mut points: Vec<Vec<f64>> = Vec::with_capacity(n * (d + 2));
-        points.extend(self.a.iter().cloned()); // block A: [0, n)
-        points.extend(self.b.iter().cloned()); // block B: [n, 2n)
+        // Domain-separated seed for row `row`, family `family` (0 = the
+        // A/AB_i family, 1 = B): reuses `child_rng`'s already-validated
+        // chain-hash instead of inventing a new mixer, then draws one u64
+        // from the resulting stream as this point's model seed.
+        let row_seed = |family: u64, row: usize| -> u64 {
+            child_rng(base_seed, family, row as u64).next_u64()
+        };
+
+        let mut seeded: Vec<(Vec<f64>, u64)> = Vec::with_capacity(n * (d + 2));
+        for (j, p) in self.a.iter().enumerate() {
+            seeded.push((p.clone(), row_seed(0, j))); // block A: [0, n)
+        }
+        for (j, p) in self.b.iter().enumerate() {
+            seeded.push((p.clone(), row_seed(1, j))); // block B: [n, 2n)
+        }
         for i in 0..d {
             for j in 0..n {
                 let mut p = self.a[j].clone();
                 p[i] = self.b[j][i];
-                points.push(p); // block AB_i: [(2+i)n, (3+i)n)
+                // Same seed as A[j] (family 0): AB_i[j] differs from A[j]
+                // only in column i, so the model runs the identical
+                // stochastic realization save for that one parameter.
+                seeded.push((p, row_seed(0, j))); // block AB_i: [(2+i)n, (3+i)n)
             }
         }
-
-        let seeded: Vec<(Vec<f64>, u64)> = points
-            .into_iter()
-            .enumerate()
-            .map(|(idx, p)| (p, base_seed.wrapping_add(idx as u64)))
-            .collect();
         let ys = evaluate_all(&seeded, max_steps, &build, &outcome);
 
         let y_a = &ys[0..n];
@@ -303,7 +337,14 @@ fn compute_indices(
     (s1, st)
 }
 
+/// `NaN` on an empty slice (reached when `n_boot == 0`: no confidence
+/// interval is meaningful without resamples) instead of the `usize`
+/// underflow (`sorted.len() - 1` with `len() == 0`) that a direct
+/// computation would produce.
 fn percentile(sorted: &[f64], p: f64) -> f64 {
+    if sorted.is_empty() {
+        return f64::NAN;
+    }
     let idx = (((sorted.len() - 1) as f64) * p).round() as usize;
     sorted[idx]
 }

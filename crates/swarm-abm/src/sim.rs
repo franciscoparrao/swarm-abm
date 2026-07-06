@@ -54,16 +54,27 @@ impl<M: Model> Simulation<M> {
     }
 
     /// Reconstructs a simulation exactly where a previous run left off,
-    /// from the **four minimal pieces** needed to resume bit-exactly: the
-    /// model, the original seed, the current RNG state, and the steps
-    /// already run.
+    /// from the **five minimal pieces** needed to resume bit-exactly: the
+    /// model, the original seed, the current RNG state, the steps already
+    /// run, and the [`Schedule`] that was in effect.
+    ///
+    /// `schedule` is a required parameter, not a default you can forget to
+    /// override: for anything but `Activation::Random` (the type's
+    /// `Default`), silently resuming under the wrong policy would activate
+    /// agents in the wrong order (`Ordered`) or skip the decide/apply or
+    /// staged phases entirely (`Simultaneous`/`Staged`, which fall back to
+    /// plain sequential `step` under `Random`) — a checkpoint/resume that
+    /// looks bit-exact but silently diverges from the original run. Pass
+    /// the same [`Schedule`] the checkpointed simulation used (`Schedule`
+    /// is `Copy`, so it costs nothing to keep around or re-derive).
     ///
     /// With the `serde` feature (which also enables `rand_chacha/serde`),
     /// [`model`](Self::model) is public and [`rng_state`](Self::rng_state)/
     /// [`seed`](Self::seed)/[`step_count`](Self::step_count) are
     /// serializable, so a checkpoint is as simple as serializing those four
     /// pieces (in whatever format you prefer — JSON, bincode, whatever)
-    /// and reconstructing them here to continue.
+    /// and reconstructing them here (alongside the schedule, which the
+    /// caller already has) to continue.
     ///
     /// Does **not** restore reporters or already-collected data: reporters
     /// are closures (`Box<dyn Fn>`), which are generally not serializable.
@@ -74,10 +85,16 @@ impl<M: Model> Simulation<M> {
     /// collected in the previous session — `run`/`step` on the
     /// reconstructed simulation will not capture it again.
     #[must_use]
-    pub fn from_checkpoint(model: M, seed: u64, rng: SimRng, steps_done: u64) -> Self {
+    pub fn from_checkpoint(
+        model: M,
+        seed: u64,
+        rng: SimRng,
+        steps_done: u64,
+        schedule: Schedule,
+    ) -> Self {
         Self {
             model,
-            schedule: Schedule::default(),
+            schedule,
             rng,
             seed,
             collector: DataCollector::new(),

@@ -18,8 +18,8 @@
 //! ```
 //!
 //! The macro generates `impl Agent for Critter`, dispatching
-//! `decide`/`apply`/`step` to the active variant's inner type. No trait
-//! objects (`Box<dyn Agent>`): the dispatch is a static `match`, so
+//! `decide`/`apply`/`step`/`stage` to the active variant's inner type. No
+//! trait objects (`Box<dyn Agent>`): the dispatch is a static `match`, so
 //! `AgentSet<Critter>`'s layout and the engine's determinism are unchanged.
 //!
 //! Requirements for each variant:
@@ -29,6 +29,21 @@
 //!   taken as the enum's `Model`; if some variant has a different `Model`,
 //!   the generated `match` fails to compile — the error points at the
 //!   conflicting type).
+//!
+//! ## Limitation: `decide_with_peers` is not dispatched
+//!
+//! [`Agent::decide_with_peers`](https://docs.rs/swarm-abm/latest/swarm_abm/agent/trait.Agent.html#method.decide_with_peers)
+//! takes `peers: &AgentSet<Self>`. For a variant's inner type (say `Fox`),
+//! that is `&AgentSet<Fox>`; for the enum itself it would be
+//! `&AgentSet<Critter>` — a different type. There is no mechanical way to
+//! forward the enum's peers snapshot into the inner type's method, so the
+//! macro deliberately leaves `decide_with_peers` **un-dispatched**: the
+//! enum inherits the trait's no-op default, same as if it were never
+//! implemented. This is silent (no compile error), so if a model needs
+//! peer-visibility with heterogeneous agents, do not rely on this derive —
+//! hand-write `impl Agent for Critter` instead (matching on `self` and
+//! composing the logic yourself, with whatever peers representation makes
+//! sense for the model).
 
 use proc_macro::TokenStream;
 use quote::quote;
@@ -61,6 +76,7 @@ pub fn derive_multi_agent(input: TokenStream) -> TokenStream {
     let mut decide_arms = Vec::new();
     let mut apply_arms = Vec::new();
     let mut step_arms = Vec::new();
+    let mut stage_arms = Vec::new();
 
     for variant in &data_enum.variants {
         let Fields::Unnamed(fields) = &variant.fields else {
@@ -92,6 +108,9 @@ pub fn derive_multi_agent(input: TokenStream) -> TokenStream {
         });
         step_arms.push(quote! {
             #name::#vident(inner) => ::swarm_abm::agent::Agent::step(inner, id, model, rng),
+        });
+        stage_arms.push(quote! {
+            #name::#vident(inner) => ::swarm_abm::agent::Agent::stage(inner, stage, id, model, rng),
         });
 
         inner_types.push(ty);
@@ -138,6 +157,18 @@ pub fn derive_multi_agent(input: TokenStream) -> TokenStream {
             ) {
                 match self {
                     #(#step_arms)*
+                }
+            }
+
+            fn stage(
+                &mut self,
+                stage: usize,
+                id: ::swarm_abm::agent::AgentId,
+                model: &mut Self::Model,
+                rng: &mut ::swarm_abm::rng::SimRng,
+            ) {
+                match self {
+                    #(#stage_arms)*
                 }
             }
         }

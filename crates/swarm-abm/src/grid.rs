@@ -90,9 +90,14 @@ pub struct NeighborsR<'g, T> {
     kind: Neighborhood,
     r: i64,
     // On a torus, bounded to `min(2r+1, height|width)`: beyond that the
-    // wrap would necessarily repeat an already-visited cell (same fix as
-    // `ContinuousSpace::for_each_within`, P1-4). Without torus, always
-    // `2r+1` (there is never wrapping; `offset` filters out-of-range values).
+    // wrap would necessarily repeat an already-visited cell — dedup by
+    // construction, no `HashSet` needed for that part (same *goal* as
+    // `ContinuousSpace::for_each_within`, P1-4, though the mechanism differs:
+    // here the bounded window feeds a Manhattan-distance filter for
+    // `VonNeumann`, and that filter has to use the true toroidal distance,
+    // not the raw window-relative offset — see the `torus_dist` fix in
+    // `next()` below). Without torus, always `2r+1` (there is never
+    // wrapping; `offset` filters out-of-range values).
     row_span: i64,
     col_span: i64,
     dr: i64,
@@ -116,7 +121,35 @@ impl<'g, T> Iterator for NeighborsR<'g, T> {
             }
             let en_radio = match self.kind {
                 Neighborhood::Moore => true, // already bounded to [-r,r]×[-r,r]
-                Neighborhood::VonNeumann => dx.abs() + dy.abs() <= self.r,
+                Neighborhood::VonNeumann => {
+                    // On a torus, `dx`/`dy` are the pre-wrap offsets within
+                    // the (possibly bounded) generation window, not
+                    // necessarily the offset of least magnitude for that
+                    // axis — when `col_span`/`row_span` is bounded to the
+                    // grid dimension (`r` large relative to it), the window
+                    // can yield a `dx` on one side of the wrap while the
+                    // true toroidal distance is shorter going the other way
+                    // (bug found by audit: VonNeumann + torus + large `r`
+                    // silently under-included neighbors, since a filter on
+                    // the window-relative `dx`/`dy` overestimates the real
+                    // distance). Recompute the true per-axis toroidal
+                    // distance before summing for the Manhattan filter.
+                    // Without torus there is no wrap, so `dx.abs()` is
+                    // already exact.
+                    let torus_dist = |delta: i64, dim: i64| -> i64 {
+                        let m = delta.rem_euclid(dim);
+                        m.min(dim - m)
+                    };
+                    let (dx_mag, dy_mag) = if self.grid.torus {
+                        (
+                            torus_dist(dx, self.grid.width as i64),
+                            torus_dist(dy, self.grid.height as i64),
+                        )
+                    } else {
+                        (dx.abs(), dy.abs())
+                    };
+                    dx_mag + dy_mag <= self.r
+                }
             };
             if !en_radio {
                 continue;
@@ -638,6 +671,41 @@ mod tests {
         assert_eq!(v.len(), 24, "the 25 cells of the torus minus itself");
         let unicos: HashSet<Pos> = v.iter().copied().collect();
         assert_eq!(unicos.len(), 24, "no duplicates");
+    }
+
+    #[test]
+    fn neighbor_positions_r_von_neumann_torus_radio_grande_no_sub_incluye() {
+        // Regression (audit finding, distinct from the Moore test above):
+        // with VonNeumann on a torus and `2r+1 > dim` on some axis, the
+        // Manhattan filter used to run against the pre-wrap, window-relative
+        // `dx`/`dy` instead of the true toroidal distance, silently
+        // UNDER-including neighbors that were, in fact, within radius
+        // (checked concretely: a 5x5 torus at (0,0) with r=3 returned 16
+        // instead of the true 20, missing (2,1)/(1,2)/(4,2)/(2,4)).
+        let g: Grid2D<u8> = Grid2D::new(5, 5).with_torus(true);
+        let centro = Pos::new(0, 0);
+        let r = 3i64;
+        let got: HashSet<Pos> = g
+            .neighbor_positions_r(centro, Neighborhood::VonNeumann, 3)
+            .collect();
+
+        let torus_dist = |a: i64, dim: i64| {
+            let m = a.rem_euclid(dim);
+            m.min(dim - m)
+        };
+        let mut truth: HashSet<Pos> = HashSet::new();
+        for y in 0..5i64 {
+            for x in 0..5i64 {
+                if (x, y) == (0, 0) {
+                    continue;
+                }
+                if torus_dist(x, 5) + torus_dist(y, 5) <= r {
+                    truth.insert(Pos::new(x as usize, y as usize));
+                }
+            }
+        }
+        assert_eq!(got, truth);
+        assert_eq!(got.len(), 20);
     }
 
     #[test]
