@@ -104,3 +104,113 @@ fn cero_etapas_no_hace_nada() {
     sim.step();
     assert!(sim.model.agents.iter().all(|(_, n)| n.counter == 0));
 }
+
+// ---------------------------------------------------------------------------
+// M7a: the `Activation::Staged(n) => self.staged_phases(n)` arm is duplicated
+// by hand in every stepping entry point of `Simulation` (`step`,
+// `step_with_peers`, `step_parallel`, `step_with_peers_parallel`). If a
+// refactor drops one of those arms, that entry point silently falls through
+// to the default no-op `Agent` hooks (`decide`/`apply`/`step`) — exactly the
+// bug class of F1. This test runs the SAME staged model through all four
+// entry points with the same seed and requires the final state to be
+// (a) bit-identical across entry points and (b) different from the initial
+// state, which proves `stage` actually ran and did not degrade to a no-op.
+// ---------------------------------------------------------------------------
+
+/// Staged model that consumes RNG and mutates both agent and model state,
+/// so a silent fall-through to no-op hooks is impossible to miss.
+/// `Clone` + plain data: satisfies the extra bounds of the peers/parallel
+/// entry points (`M::Agent: Clone + Send + Sync`, `M: Sync`).
+#[derive(Clone)]
+struct Marcher {
+    counter: u64,
+}
+
+struct Field {
+    agents: AgentSet<Marcher>,
+    /// Model-level state mutated during stage 1 (exercises `&mut Model`).
+    total: u64,
+}
+
+impl Agent for Marcher {
+    type Model = Field;
+
+    fn stage(&mut self, stage: usize, _id: AgentId, model: &mut Field, rng: &mut SimRng) {
+        match stage {
+            // Stage 0 draws from the shared step RNG: any entry point that
+            // skipped it would leave the stream (and everyone after) off.
+            0 => self.counter = self.counter.wrapping_add(rng.random_range(1..1_000)),
+            // Stage 1 couples agents through the model, order-sensitively:
+            // a reshuffle or a dropped sweep changes the result.
+            1 => {
+                self.counter = self.counter.wrapping_mul(3).wrapping_add(model.total);
+                model.total = model.total.wrapping_add(self.counter);
+            }
+            _ => unreachable!("solo se configuraron 2 etapas"),
+        }
+    }
+}
+
+impl Model for Field {
+    type Agent = Marcher;
+    fn agents(&self) -> &AgentSet<Marcher> {
+        &self.agents
+    }
+    fn agents_mut(&mut self) -> &mut AgentSet<Marcher> {
+        &mut self.agents
+    }
+}
+
+fn build_field(n: usize) -> Field {
+    let mut agents = AgentSet::with_capacity(n);
+    for _ in 0..n {
+        agents.insert(Marcher { counter: 0 });
+    }
+    Field { agents, total: 0 }
+}
+
+/// Builds an identical staged simulation (same seed, `Activation::Staged(2)`
+/// under Random ordering so the shuffle also consumes step RNG), advances it
+/// 5 steps via `avanzar`, and returns the final per-agent counters.
+fn correr_staged(avanzar: impl Fn(&mut Simulation<Field>)) -> Vec<u64> {
+    let mut sim =
+        Simulation::new(build_field(25), 42).with_schedule(Schedule::new(Activation::Staged(2)));
+    for _ in 0..5 {
+        avanzar(&mut sim);
+    }
+    sim.model.agents.iter().map(|(_, m)| m.counter).collect()
+}
+
+#[test]
+fn staged_es_bit_identico_en_los_cuatro_entry_points() {
+    let con_step = correr_staged(|sim| sim.step());
+
+    // Guard against the no-op degradation: if `stage` never ran, every
+    // counter would still be 0 (the initial state).
+    assert_ne!(
+        con_step,
+        vec![0; 25],
+        "el estado final debe diferir del inicial: `stage` tiene que haber corrido"
+    );
+
+    let con_peers = correr_staged(|sim| sim.step_with_peers());
+    assert_eq!(
+        con_step, con_peers,
+        "step_with_peers debe despachar Staged igual que step"
+    );
+
+    #[cfg(feature = "parallel")]
+    {
+        let con_parallel = correr_staged(|sim| sim.step_parallel());
+        assert_eq!(
+            con_step, con_parallel,
+            "step_parallel debe despachar Staged igual que step"
+        );
+
+        let con_peers_parallel = correr_staged(|sim| sim.step_with_peers_parallel());
+        assert_eq!(
+            con_step, con_peers_parallel,
+            "step_with_peers_parallel debe despachar Staged igual que step"
+        );
+    }
+}

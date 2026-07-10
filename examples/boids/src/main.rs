@@ -109,9 +109,9 @@ fn build(n: usize, size: f64, seed: u64) -> Flock {
     let mut agents = AgentSet::with_capacity(n);
     let mut space = ContinuousSpace::new(size, size, 6.0).with_torus(true);
     for _ in 0..n {
-        let pos = Vec2::new(rng.random_range(0.0..size), rng.random_range(0.0..size));
+        let pos = Vec2::new(uniform_f64(&mut rng) * size, uniform_f64(&mut rng) * size);
         // Velocidad inicial al azar (rumbos dispersos → orden ≈ 0).
-        let ang = rng.random_range(0.0..std::f64::consts::TAU);
+        let ang = uniform_f64(&mut rng) * std::f64::consts::TAU;
         let vel = Vec2::new(ang.cos(), ang.sin());
         let point = space.add(pos, vel);
         agents.insert(Boid { pos, vel, point });

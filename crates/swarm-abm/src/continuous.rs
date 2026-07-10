@@ -219,7 +219,10 @@ impl<T> ContinuousSpace<T> {
                 generation: slot.generation,
             };
         }
-        let index = u32::try_from(self.slots.len()).expect("more than u32::MAX historical points");
+        // The LIFO free list recycles indices, so the limit is the peak
+        // number of concurrent slots, not the historical insert count.
+        let index =
+            u32::try_from(self.slots.len()).expect("more than u32::MAX concurrent point slots");
         self.slots.push(Slot {
             generation: 0,
             state: PointState::Occupied { pos, data: value },
@@ -383,7 +386,22 @@ impl<T> ContinuousSpace<T> {
     #[must_use]
     pub fn wrap(&self, p: Vec2) -> Vec2 {
         if self.torus {
-            Vec2::new(p.x.rem_euclid(self.width), p.y.rem_euclid(self.height))
+            // `rem_euclid` can round to exactly `width`/`height` when the
+            // input is a negative residue of magnitude smaller than half an
+            // ulp of the modulus (e.g. `(-1e-15).rem_euclid(100.0) ==
+            // 100.0`), which falls outside the documented half-open domain
+            // `[0, width) × [0, height)`. Fold that edge back to `0.0` —
+            // the toroidally equivalent point (NOT `next_down`, which would
+            // be geometrically wrong here).
+            let mut x = p.x.rem_euclid(self.width);
+            if x >= self.width {
+                x = 0.0;
+            }
+            let mut y = p.y.rem_euclid(self.height);
+            if y >= self.height {
+                y = 0.0;
+            }
+            Vec2::new(x, y)
         } else {
             // The domain is half-open `[0, width) × [0, height)`;
             // clamping to `width` would include the edge, breaking the
@@ -408,7 +426,14 @@ impl<T> ContinuousSpace<T> {
         radius: f64,
         mut f: impl FnMut(PointId, Vec2, &T, f64),
     ) {
-        let cr = (radius / self.cell).ceil() as i64 + 1;
+        // A non-finite (`INFINITY`) or astronomically large radius makes
+        // `(radius / cell).ceil() as i64` saturate to `i64::MAX`, and the
+        // `+ 1` then overflows: panic in debug, and in release the wrap
+        // silently visits a single bucket (empty result). Clamp to the
+        // grid size first — more cells than `max(rows, cols)` can never be
+        // needed (the span bounding below already covers the whole grid at
+        // that point), so `INFINITY` naturally means "all buckets".
+        let cr = ((radius / self.cell).ceil() as i64).min(self.rows.max(self.cols) as i64) + 1;
         let (cc, cr_row) = self.cell_coords(center);
 
         if self.torus {
@@ -691,5 +716,57 @@ mod tests {
         let a = s.add(Vec2::new(1.0, 1.0), ());
         s.remove(a);
         let _ = s.position(a);
+    }
+
+    #[test]
+    fn wrap_toroidal_nunca_devuelve_el_borde_superior() {
+        // Regression (audit M3): `rem_euclid` with a tiny negative residue
+        // rounds to exactly the modulus (`(-1e-15).rem_euclid(100.0) ==
+        // 100.0`), leaking outside the half-open domain [0, 100).
+        let s: ContinuousSpace<()> = ContinuousSpace::new(100.0, 100.0, 10.0).with_torus(true);
+        let w = s.wrap(Vec2::new(-1e-15, -1e-15));
+        assert!(w.x >= 0.0 && w.x < 100.0, "x={} out of [0, 100)", w.x);
+        assert!(w.y >= 0.0 && w.y < 100.0, "y={} out of [0, 100)", w.y);
+        assert_eq!(w.x, 0.0, "the toroidally equivalent point is 0.0");
+        assert_eq!(w.y, 0.0, "the toroidally equivalent point is 0.0");
+    }
+
+    #[test]
+    fn set_pos_toroidal_con_residuo_negativo_diminuto_queda_en_dominio() {
+        let mut s: ContinuousSpace<()> = ContinuousSpace::new(100.0, 100.0, 10.0).with_torus(true);
+        let p = s.add(Vec2::new(50.0, 50.0), ());
+        s.set_pos(p, Vec2::new(-1e-15, -1e-15));
+        let pos = s.position(p);
+        assert!(pos.x >= 0.0 && pos.x < 100.0, "x={} out of [0, 100)", pos.x);
+        assert!(pos.y >= 0.0 && pos.y < 100.0, "y={} out of [0, 100)", pos.y);
+        assert_eq!(pos.x, 0.0);
+        assert_eq!(pos.y, 0.0);
+        // And the index accepts it without panicking (cell_coords clamps).
+        s.reindex();
+        assert_eq!(s.within(Vec2::new(0.0, 0.0), 1.0).len(), 1);
+    }
+
+    #[test]
+    fn radio_infinito_o_astronomico_devuelve_todos_los_puntos() {
+        // Regression (audit L1): `(radius / cell).ceil() as i64 + 1` with
+        // radius = INFINITY (or >= ~9.2e18·cell) saturated the cast and
+        // the `+ 1` overflowed — panic in debug, silently empty result in
+        // release. With the clamp, an unbounded radius means "all buckets".
+        for torus in [false, true] {
+            let mut s: ContinuousSpace<()> =
+                ContinuousSpace::new(100.0, 100.0, 10.0).with_torus(torus);
+            for i in 0..10 {
+                for j in 0..10 {
+                    s.add(Vec2::new(i as f64 * 10.0 + 5.0, j as f64 * 10.0 + 5.0), ());
+                }
+            }
+            s.reindex();
+            for radius in [f64::INFINITY, 1e300] {
+                let hits = s.within(Vec2::new(50.0, 50.0), radius);
+                assert_eq!(hits.len(), 100, "torus={torus} radius={radius}");
+                let unicos: HashSet<PointId> = hits.iter().map(|(id, _)| *id).collect();
+                assert_eq!(unicos.len(), 100, "no duplicates: torus={torus}");
+            }
+        }
     }
 }

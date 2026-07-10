@@ -1,19 +1,47 @@
 //! # swarm-abm
 //!
-//! Spatial agent-based modeling (ABM) engine: agents on a 2D grid,
-//! configurable scheduling, time-series data collection, and deterministic
-//! reproducibility (same seed → same results).
+//! Spatial agent-based modeling (ABM) engine: agents on a grid, graph, or
+//! continuous space, configurable scheduling, time-series data collection,
+//! batch runs and experiment design, and deterministic reproducibility —
+//! same seed, same result, bit for bit, even under parallelism.
 //!
 //! ## Concepts
 //!
 //! - [`Agent`](agent::Agent): per-step behavior of each agent.
 //! - [`Model`](model::Model): global state (agents + spatial environment).
-//! - [`Grid2D`](grid::Grid2D): dense grid with Moore / Von Neumann
-//!   neighborhoods and optional toroidal topology.
-//! - [`Schedule`](schedule::Schedule): fixed-order, random, or two-phase
-//!   simultaneous activation (`decide` with an immutable model + `apply`).
-//! - [`DataCollector`](data::DataCollector): time series per reporter.
-//! - [`Simulation`](sim::Simulation): runner with a seeded RNG.
+//! - Three spatial paradigms:
+//!   - [`Grid2D`](grid::Grid2D): dense 2D grid with Moore / Von Neumann
+//!     neighborhoods, optional toroidal topology, and NetLogo-style
+//!     [`diffuse`](grid::Grid2D::diffuse).
+//!   - [`Graph`](graph::Graph): networks as space, with deterministic
+//!     Erdős–Rényi, Watts–Strogatz, and Barabási–Albert generators.
+//!   - [`ContinuousSpace`](continuous::ContinuousSpace): 2D continuous
+//!     space with radius neighborhood queries via spatial hashing.
+//! - [`Schedule`](schedule::Schedule): [`Activation`](schedule::Activation)
+//!   policies — fixed-order, random (a fresh seeded permutation per step),
+//!   two-phase simultaneous (`decide` with an immutable model + `apply`),
+//!   or staged (Mesa-style `N` sweeps per step).
+//! - [`DataCollector`](data::DataCollector) /
+//!   [`AgentDataCollector`](data::AgentDataCollector): time series per
+//!   reporter, model-level and per-agent.
+//! - [`Simulation`](sim::Simulation): runner with a seeded RNG. With the
+//!   `parallel` feature (default), the simultaneous `decide` phase runs
+//!   across threads with results bit-identical to the sequential run; with
+//!   the `serde` feature, checkpoint/resume via
+//!   [`Simulation::from_checkpoint`](sim::Simulation::from_checkpoint).
+//! - [`rng`]: engine-owned deterministic primitives
+//!   ([`uniform_usize`](rng::uniform_usize), [`uniform_f64`](rng::uniform_f64),
+//!   [`bernoulli`](rng::bernoulli), [`shuffle`](rng::shuffle),
+//!   [`child_rng`](rng::child_rng)) — the basis of the reproducibility
+//!   guarantee (see `docs/REPRODUCIBILITY.md`).
+//! - [`batch`]: [`run_ensemble`](batch::run_ensemble) /
+//!   [`run_sweep`](batch::run_sweep) for replicate ensembles and parameter
+//!   sweeps (parallel with the `parallel` feature, sequential without it).
+//! - `experiment` (feature `experiment`): deterministic experiment design —
+//!   Sobol' global sensitivity analysis (Saltelli scheme with bootstrap),
+//!   Morris screening, and Latin hypercube sampling.
+//! - [`MultiAgent`](prelude::MultiAgent): derive macro for heterogeneous
+//!   agents as an `enum`, dispatching to the active variant.
 //!
 //! ## Example: random walkers
 //!

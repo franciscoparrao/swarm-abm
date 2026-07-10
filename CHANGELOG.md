@@ -4,7 +4,107 @@ Formato basado en [Keep a Changelog](https://keepachangelog.com/).
 El proyecto sigue [SemVer](https://semver.org/). Mientras `0.x`, la API
 puede cambiar entre minors.
 
-## [Sin publicar]
+## [Sin publicar] — candidata a 0.4.0
+
+Acumula dos tandas de correcciones de auditoría posteriores a la
+publicación de 0.3.0: la **auditoría de seguimiento** del 2026-07-05
+(F1–F6) y la **tercera pasada** del 2026-07-10 (5 altos, 9 medios y ~10
+bajos; ver `docs/AUDIT.md`). Ninguna de las dos está en la 0.3.0 de
+crates.io.
+
+### Rompe determinismo
+
+Cambian los bits exactos para una semilla dada — re-validar resultados
+numéricos publicados (los índices de Sobol de SIGRID incluidos):
+
+- `experiment::sobol` usa *common random numbers*: `A[j]` y cada
+  `AB_i[j]` comparten semilla por fila (`B[j]` independiente), como exige
+  el esquema de Saltelli. Antes cada punto corría con RNG propio, inflando
+  `ST` de parámetros inertes con ruido puro en modelos estocásticos (F3).
+- La secuencia Sobol′ ahora descarta los primeros `n.next_power_of_two()`
+  puntos (bloque alineado diádicamente, Owen 2020) en vez del origen a
+  secas: `.skip(1)` degradaba la convergencia QMC de ~O(1/n) hacia
+  O(n^(−1/2)) — con skip alineado, el error del estimador a n=4096 cae
+  ~3 órdenes de magnitud (3ª pasada, corrige el alcance corto de F4).
+- `experiment::morris` usa *common random numbers* por trayectoria: los
+  `d+1` puntos de una trayectoria comparten semilla, así los efectos
+  elementales de un parámetro inerte son 0 y no ruido (3ª pasada, el
+  espejo de F3 que la 2ª pasada no revisó).
+- `Grid2D::neighbor_positions_r` con VonNeumann + torus + radio grande ya
+  no sub-incluye vecinos (F5); `neighbor_positions`/`random_neighbor` ya
+  no incluyen la celda propia en grillas toroidales degeneradas (algún
+  eje de dimensión 1) — grillas con ejes ≥ 3 no cambian ni un bit.
+- `ContinuousSpace::wrap` toroidal ya no puede devolver exactamente
+  `width`/`height` (redondeo de `rem_euclid` con residuo negativo
+  diminuto); el punto se normaliza a `0.0`.
+- Los 4 ejemplos (`network-sir`, `boids`, `difusion`, `life`) migran a las
+  primitivas propias de `rng` (cambia su stream, no el del motor).
+
+### Cambios de API (breaking respecto de 0.3.0)
+
+- `Simulation::from_checkpoint` exige el `Schedule` como quinto parámetro:
+  antes fijaba `Random` en silencio y el resume no era bit-exacto para
+  `Ordered`/`Simultaneous`/`Staged` (F2).
+- `swarm-wasm`: los constructores toman `seed: u64` (antes `u32`); en JS
+  la semilla se pasa como `BigInt`. Corridas nativas con semilla ≥ 2³²
+  ahora son reproducibles en el navegador.
+
+### Corregido
+
+- `#[derive(MultiAgent)]` despacha `Agent::stage`: un enum multi-especie
+  bajo `Activation::Staged` ya no cae al no-op en silencio (F1).
+- `swarm-py` compila de nuevo: el `#[pymodule]` colisionaba con el nombre
+  del crate renombrado (E0659, roto desde 0.3.0); el módulo Python sigue
+  siendo `swarm_abm`.
+- Un NaN en las evaluaciones de Sobol propaga NaN a los índices en vez de
+  colapsarlos todos a 0.0 exacto en silencio (el peor modo de falla:
+  "nada es sensible" como resultado aparentemente válido).
+- `sobol_indices_with_bootstrap` con `n_boot = 0` degrada a `(NaN, NaN)`
+  en vez de panic por underflow (F6).
+- `ContinuousSpace::for_each_within` con radio no finito o astronómico
+  devuelve todos los puntos en vez de panic (debug) / vacío (release).
+- Morris: nivel base máximo en aritmética entera (la fórmula flotante
+  perdía un nivel válido para `levels` ∈ {30, 88, 150, …}); `sigma` con
+  varianza muestral (n−1, como SALib), no poblacional.
+- `from_checkpoint` documenta que `collect_every` vuelve a 1 y debe
+  re-aplicarse (los reporters ya estaban documentados).
+- Rustdoc honesto: el orden de iteración es por slot (igual al de
+  inserción solo hasta que un remove es seguido de un insert) — 4 sitios
+  prometían "insertion order" pre-arena; `# Panics` completos en `graph`.
+
+### Añadido
+
+- **Golden test de trayectoria completa** (`tests/golden_values.rs`):
+  pinnea posiciones finales y hash FNV-1a de una simulación entera
+  (10×10, 10 agentes, 20 pasos, semilla 42) — corre también en wasm32 en
+  CI. Su falla significa ruptura del contrato de reproducibilidad: exige
+  bump minor + entrada aquí, no re-pinnear.
+- Cobertura nueva: `Staged` bit-idéntico por los 4 entry points de step;
+  checkpoint bajo `Simultaneous` y `Staged`; CRN de Sobol y Morris con
+  modelos de ruido puro.
+- CI: job `bindings` (`cargo check` de swarm-py y swarm-wasm — estaban
+  fuera del workspace y nada los compilaba: así se rompió swarm-py sin
+  que nadie lo viera), clippy `--all-features` en stable, y el camino
+  secuencial de `experiment` (`--no-default-features --features
+  experiment,serde`, el camino WASM declarado).
+
+### Cambiado
+
+- Versión del workspace a 0.4.0; los bindings (que nacieron en 0.4.0)
+  quedan por fin alineados con el motor que envuelven.
+- `docs/REPRODUCIBILITY.md`: el checkpoint son **cinco** piezas (falta el
+  `Schedule` era exactamente la omisión detrás de F2); portada de docs.rs
+  actualizada (describía el motor v0.1, sin Graph/Continuous/experiment).
+
+## [0.3.0] — 2026-07-02 — primera publicación en crates.io
+
+> Publicada en crates.io el 2026-07-02. **Advertencia**: esta versión
+> contiene los 6 defectos F1–F6 corregidos después de publicar (ver la
+> sección "Sin publicar" de arriba y `docs/AUDIT.md`, "Auditoría de
+> seguimiento — 2026-07-05"); en particular el Sobol sin *common random
+> numbers* (F3) y el `from_checkpoint` que ignora el `Schedule` (F2).
+> Quien dependa de `experiment::sobol` o de checkpoints debería esperar
+> a 0.4.0.
 
 ### Rompe determinismo
 
@@ -143,7 +243,11 @@ conclusiones científicas no).
   sembrado (ChaCha8), no `std_rng`/`os_rng`/`thread_rng` — así no arrastra
   `getrandom` y compila a `wasm32-unknown-unknown`.
 
-## [0.3.0] — 2026-06-18
+## [0.3.0-dev] — 2026-06-18 — interna, previa a la publicación
+
+> Numerada 0.3.0 en el árbol antes de que existiera la publicación en
+> crates.io; nunca se publicó como tal. Se re-etiqueta aquí para
+> distinguirla de la 0.3.0 real de crates.io (arriba).
 
 El motor pasa de un solo espacio (grilla) a **tres paradigmas espaciales
 bajo el mismo `Agent`/`Model`**, más ejecución en lote.

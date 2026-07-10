@@ -250,6 +250,185 @@ fn sobol_usa_common_random_numbers_para_parametro_inerte() {
     );
 }
 
+/// Regresión (hallazgo de auditoría A1, espejo Morris de
+/// `sobol_usa_common_random_numbers_para_parametro_inerte`): antes, cada
+/// punto del diseño de Morris recibía `base_seed + índice_global`, así que
+/// los `d+1` puntos de una MISMA trayectoria corrían con RNG independiente
+/// y el efecto elemental `EE = (y(x+Δe_i) − y(x))/Δ` de un parámetro
+/// inerte era ruido puro (`mu_star`/`sigma` ~0.5/~0.6 para este modelo).
+/// Con *common random numbers* por trayectoria, los dos puntos que definen
+/// cada EE comparten semilla; el outcome de este modelo depende SOLO de la
+/// semilla, así que cada EE debe ser 0.0 exacto.
+#[test]
+fn morris_usa_common_random_numbers_para_parametro_inerte() {
+    struct NoisyAgent;
+    impl Agent for NoisyAgent {
+        type Model = Noisy;
+    }
+    struct Noisy {
+        value: f64,
+        agents: AgentSet<NoisyAgent>,
+    }
+    impl Model for Noisy {
+        type Agent = NoisyAgent;
+        fn agents(&self) -> &AgentSet<NoisyAgent> {
+            &self.agents
+        }
+        fn agents_mut(&mut self) -> &mut AgentSet<NoisyAgent> {
+            &mut self.agents
+        }
+    }
+    fn noisy_build(_point: &[f64], seed: u64) -> Simulation<Noisy> {
+        let mut rng = rng_from_seed(seed);
+        Simulation::new(
+            Noisy {
+                // Ruido puro derivado de la semilla, independiente de TODOS
+                // los parámetros: ambos son inertes.
+                value: uniform_f64(&mut rng),
+                agents: AgentSet::new(),
+            },
+            0,
+        )
+    }
+    fn noisy_outcome(sim: &Simulation<Noisy>) -> f64 {
+        sim.model.value
+    }
+
+    let specs = vec![
+        ParamSpec::new("inerte_a", 0.0, 1.0),
+        ParamSpec::new("inerte_b", 0.0, 1.0),
+    ];
+    let resultado = morris(&specs, 30, 4, 11).run(5, 0, noisy_build, noisy_outcome);
+    for r in &resultado {
+        assert!(
+            r.mu_star < 1e-9 && r.sigma < 1e-9,
+            "{}: mu_star = {:.6}, sigma = {:.6}; esperado ~0 exacto bajo CRN \
+             (si esto falla, los puntos de una misma trayectoria volvieron a \
+             usar semillas distintas)",
+            r.name,
+            r.mu_star,
+            r.sigma
+        );
+    }
+}
+
+/// Regresión (hallazgo de auditoría A2): saltar solo el origen (`skip(1)`)
+/// es el anti-patrón de Owen (2020, "On dropping the first Sobol' point"):
+/// el bloque de `n` puntos que no empieza en un múltiplo de 2^m deja de
+/// ser una (t,m,s)-red y la convergencia degrada hacia O(n^-1/2). Con el
+/// modelo lineal y = 10·x1 (S1[x1] = ST[x1] = 1 exactos), a n = 256 el
+/// `skip(1)` viejo daba error ~0.026; con el salto alineado diádicamente
+/// (`n.next_power_of_two()`) el error medido es ~2e-4 — el umbral 0.005
+/// deja margen holgado pero el código viejo lo revienta por 5×.
+#[test]
+fn sobol_skip_alineado_conserva_la_convergencia_de_la_red() {
+    struct LinAgent;
+    impl Agent for LinAgent {
+        type Model = Lineal;
+    }
+    struct Lineal {
+        value: f64,
+        agents: AgentSet<LinAgent>,
+    }
+    impl Model for Lineal {
+        type Agent = LinAgent;
+        fn agents(&self) -> &AgentSet<LinAgent> {
+            &self.agents
+        }
+        fn agents_mut(&mut self) -> &mut AgentSet<LinAgent> {
+            &mut self.agents
+        }
+    }
+    fn lin_build(point: &[f64], _seed: u64) -> Simulation<Lineal> {
+        Simulation::new(
+            Lineal {
+                value: 10.0 * point[0],
+                agents: AgentSet::new(),
+            },
+            0,
+        )
+    }
+    fn lin_outcome(sim: &Simulation<Lineal>) -> f64 {
+        sim.model.value
+    }
+
+    let specs = vec![
+        ParamSpec::new("x1", 0.0, 1.0),
+        ParamSpec::new("x2", 0.0, 1.0),
+    ];
+    let result = sobol(&specs, 256).run(1, 0, 0, lin_build, lin_outcome);
+
+    assert!(
+        (result.s1[0] - 1.0).abs() < 0.005,
+        "S1[x1] = {:.4}, esperado 1.0 ± 0.005 (skip(1) daba err ~0.026)",
+        result.s1[0]
+    );
+    assert!(
+        (result.st[0] - 1.0).abs() < 0.005,
+        "ST[x1] = {:.4}, esperado 1.0 ± 0.005 (skip(1) daba err ~0.026)",
+        result.st[0]
+    );
+    assert!(result.s1[1].abs() < 0.005, "S1[x2] = {:.4}", result.s1[1]);
+    assert!(result.st[1].abs() < 0.005, "ST[x2] = {:.4}", result.st[1]);
+}
+
+/// Regresión (hallazgo de auditoría M4): un solo NaN en las evaluaciones
+/// hacía `var_y = NaN`, la comparación `var_y > 0.0` daba `false`, y el
+/// código caía en la rama de "modelo constante" → S1 = ST = 0.0 para TODOS
+/// los parámetros y CIs (0,0), en silencio — se leía como "ningún parámetro
+/// importa" cuando la verdad es "el modelo explotó". Ahora los índices y
+/// sus intervalos se propagan como NaN, el señalamiento honesto.
+#[test]
+fn sobol_propaga_nan_en_vez_de_colapsar_indices_a_cero() {
+    struct NanAgent;
+    impl Agent for NanAgent {
+        type Model = ConNan;
+    }
+    struct ConNan {
+        value: f64,
+        agents: AgentSet<NanAgent>,
+    }
+    impl Model for ConNan {
+        type Agent = NanAgent;
+        fn agents(&self) -> &AgentSet<NanAgent> {
+            &self.agents
+        }
+        fn agents_mut(&mut self) -> &mut AgentSet<NanAgent> {
+            &mut self.agents
+        }
+    }
+    fn nan_build(point: &[f64], _seed: u64) -> Simulation<ConNan> {
+        Simulation::new(
+            ConNan {
+                // El modelo "explota" en parte del dominio.
+                value: if point[0] > 0.5 { f64::NAN } else { point[0] },
+                agents: AgentSet::new(),
+            },
+            0,
+        )
+    }
+    fn nan_outcome(sim: &Simulation<ConNan>) -> f64 {
+        sim.model.value
+    }
+
+    let specs = vec![
+        ParamSpec::new("x1", 0.0, 1.0),
+        ParamSpec::new("x2", 0.0, 1.0),
+    ];
+    let result = sobol(&specs, 64).run(1, 0, 50, nan_build, nan_outcome);
+
+    for i in 0..2 {
+        assert!(
+            result.s1[i].is_nan() && result.st[i].is_nan(),
+            "S1[{i}] = {:?}, ST[{i}] = {:?}: deben ser NaN, no 0.0 silencioso",
+            result.s1[i],
+            result.st[i]
+        );
+        assert!(result.s1_conf[i].0.is_nan() && result.s1_conf[i].1.is_nan());
+        assert!(result.st_conf[i].0.is_nan() && result.st_conf[i].1.is_nan());
+    }
+}
+
 /// Regresión: `n_boot = 0` hacía `panic!` por underflow de `usize` en
 /// `percentile` (slice de bootstrap vacío). Ahora degrada a `(NaN, NaN)`
 /// en vez de crashear; los puntuales `s1`/`st` siguen siendo válidos (no

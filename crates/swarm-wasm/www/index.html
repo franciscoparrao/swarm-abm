@@ -114,7 +114,8 @@ function rebuild() {
   const c = cfg();
   const size = +$("size").value;
   const p = +$("param").value;
-  model = c.make(size, seed, p);
+  // Constructors take a u64 seed: wasm-bindgen expects a BigInt, not a Number.
+  model = c.make(size, BigInt(seed), p);
   t = 0;
   draw(); stats();
 }

@@ -1,8 +1,10 @@
-//! Tests de UI: `#[derive(MultiAgent)]` sobre entradas inválidas debe dar un
-//! error de compilación con un mensaje que señale el problema, no un panic
-//! del macro ni un error genérico de tipos incomprensible. No se fijan los
-//! `.stderr` exactos (frágil entre versiones de rustc): alcanza con que
-//! `trybuild` confirme que la compilación falla.
+//! UI tests: `#[derive(MultiAgent)]` on invalid inputs must produce a
+//! compile error whose message points at the problem, not a macro panic nor
+//! an inscrutable generic type error. The exact `.stderr` outputs ARE pinned
+//! under `tests/ui/`: trybuild requires them for `compile_fail` tests (with
+//! no `.stderr` it writes candidates to `wip/` and fails the test). If a new
+//! rustc changes the diagnostic rendering, refresh them with
+//! `TRYBUILD=overwrite cargo test -p swarm-abm-derive` and review the diff.
 
 #[test]
 fn ui_rechaza_entradas_invalidas() {

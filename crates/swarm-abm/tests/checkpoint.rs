@@ -11,6 +11,9 @@ use swarm_abm::prelude::*;
 #[derive(Serialize, Deserialize)]
 struct Walker {
     pos: Pos,
+    /// Destination chosen in the `decide` phase (Simultaneous activation),
+    /// materialized in `apply`. `None` outside that window.
+    pending: Option<Pos>,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -25,6 +28,33 @@ impl Agent for Walker {
     type Model = World;
 
     fn step(&mut self, _id: AgentId, model: &mut World, rng: &mut SimRng) {
+        if let Some(dest) = model
+            .grid
+            .random_neighbor(self.pos, Neighborhood::Moore, rng)
+        {
+            self.pos = dest;
+            model.grid[self.pos] += 1;
+        }
+    }
+
+    // Simultaneous activation: pick in `decide` (per-agent RNG, immutable
+    // model), materialize in `apply`. Same footprint semantics as `step`.
+    fn decide(&mut self, _id: AgentId, model: &World, rng: &mut SimRng) {
+        self.pending = model
+            .grid
+            .random_neighbor(self.pos, Neighborhood::Moore, rng);
+    }
+
+    fn apply(&mut self, _id: AgentId, model: &mut World, _rng: &mut SimRng) {
+        if let Some(dest) = self.pending.take() {
+            self.pos = dest;
+            model.grid[self.pos] += 1;
+        }
+    }
+
+    // Staged activation: both stages move and mark, so each consumes the
+    // shared step RNG — a resume that mishandled Staged would diverge fast.
+    fn stage(&mut self, _stage: usize, _id: AgentId, model: &mut World, rng: &mut SimRng) {
         if let Some(dest) = model
             .grid
             .random_neighbor(self.pos, Neighborhood::Moore, rng)
@@ -52,7 +82,7 @@ fn build(seed: u64) -> World {
     let mut agents = AgentSet::new();
     for _ in 0..50 {
         let pos = Pos::new(uniform_usize(&mut rng, 20), uniform_usize(&mut rng, 20));
-        agents.insert(Walker { pos });
+        agents.insert(Walker { pos, pending: None });
     }
     World {
         agents,
@@ -149,6 +179,64 @@ fn checkpoint_respeta_el_schedule_ordered_original() {
         huella(&resumida.model),
         "el checkpoint debe reanudar bit-exactamente bajo Ordered, no solo bajo el Random por defecto"
     );
+}
+
+/// M7b: `from_checkpoint`'s docstring names Simultaneous/Staged as the
+/// schedules that would silently diverge if the resume mishandled the
+/// activation policy, yet only Random and Ordered were covered. Shared
+/// harness for the two missing cases, mirroring
+/// `checkpoint_respeta_el_schedule_ordered_original`: run 10 steps,
+/// checkpoint (full serialize + deserialize), resume with the ORIGINAL
+/// schedule, run 10 more — the footprint must be bit-identical to the
+/// uninterrupted 20-step run.
+fn checkpoint_es_bit_identico_bajo(schedule: Schedule) {
+    let seed = 91;
+
+    let mut sin_interrumpir = Simulation::new(build(seed), seed).with_schedule(schedule);
+    sin_interrumpir.run(20);
+
+    let mut sim = Simulation::new(build(seed), seed).with_schedule(schedule);
+    sim.run(10);
+
+    let model_json = serde_json::to_string(&sim.model).expect("modelo serializable");
+    let rng_json = serde_json::to_string(sim.rng_state()).expect("rng serializable");
+    let modelo_restaurado: World =
+        serde_json::from_str(&model_json).expect("modelo deserializable");
+    let rng_restaurado: SimRng = serde_json::from_str(&rng_json).expect("rng deserializable");
+
+    let mut resumida = Simulation::from_checkpoint(
+        modelo_restaurado,
+        sim.seed(),
+        rng_restaurado,
+        sim.step_count(),
+        schedule,
+    );
+    resumida.run(10);
+
+    // Sanity: the schedule actually did work (the grid is not untouched),
+    // so a silent no-op dispatch cannot pass as "bit-identical".
+    assert!(
+        huella(&sin_interrumpir.model).iter().any(|&(_, v)| v > 0),
+        "la corrida de referencia debe haber movido agentes"
+    );
+    assert_eq!(
+        huella(&sin_interrumpir.model),
+        huella(&resumida.model),
+        "el checkpoint debe reanudar bit-exactamente bajo este schedule"
+    );
+}
+
+#[test]
+fn checkpoint_respeta_el_schedule_simultaneous() {
+    // Simultaneous derives per-agent RNG from (seed, step, id): the resume
+    // must restore `step_count` exactly or every `decide` stream shifts.
+    checkpoint_es_bit_identico_bajo(Schedule::new(Activation::Simultaneous));
+}
+
+#[test]
+fn checkpoint_respeta_el_schedule_staged() {
+    // Staged(2): two full sweeps per step over the shared step RNG.
+    checkpoint_es_bit_identico_bajo(Schedule::new(Activation::Staged(2)));
 }
 
 #[test]

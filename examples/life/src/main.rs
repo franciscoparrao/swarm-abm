@@ -85,7 +85,7 @@ fn build(width: usize, height: usize, seed: u64, work: usize) -> Life {
     for y in 0..height {
         for x in 0..width {
             let pos = Pos::new(x, y);
-            let alive = rng.random_bool(0.3);
+            let alive = bernoulli(&mut rng, 0.3);
             grid[pos] = alive;
             agents.insert(Cell {
                 pos,

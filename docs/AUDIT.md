@@ -132,6 +132,104 @@ con `levels` impar cae fuera de grilla; reporter agregado a media corrida
 desalinea el eje de pasos; `to_csv` emite tokens `NaN`/`inf` no estándar;
 posiciones no finitas en `ContinuousSpace` desaparecen en silencio.
 
+## Auditoría — 3ª pasada (2026-07-10)
+
+Tercera pasada con **5 lectores independientes**: cuatro por subsistema
+(núcleo de ejecución; los tres espacios; `experiment`+`data`+`batch`;
+bindings+macro) más un **auditor adversarial transversal** nuevo, encargado
+de los huecos que las auditorías por-subsistema no ven (cobertura real de
+los tests, CI, docs públicos vs código, estado de lo publicado). Cada
+hallazgo se verificó empíricamente (test desechable que reproduce el
+defecto, `cargo check`, o consulta a la API de crates.io) antes de
+reportarse; los fixes se aplicaron con test de regresión cada uno.
+
+**Resultado: 5 altos, 9 medios, ~10 bajos — todos resueltos en esta misma
+ventana** salvo lo explícitamente diferido (ver "Diferido" abajo).
+
+### Altos
+
+| Ítem | Estado | Hallazgo |
+|------|--------|----------|
+| A1 | ✅ Resuelto | `experiment::morris` sin *common random numbers* — el espejo exacto de F3 que la 2ª pasada corrigió solo en Sobol. Semilla por punto global (`base_seed.wrapping_add(idx)`, el patrón que F3 eliminó): cada efecto elemental era la diferencia entre dos realizaciones estocásticas independientes. Verificado: parámetro inerte en modelo de ruido puro daba `mu_star=0.50, sigma=0.63` (esperado 0). Fix: semilla compartida por los d+1 puntos de cada trayectoria vía `child_rng` (mismo mecanismo que `row_seed` de F3). Con el fix: 0.0 exacto. |
+| A2 | ✅ Resuelto | El fix F4 (`.skip(1)` de la secuencia Sobol′) era el anti-patrón documentado por Owen (2020, *On dropping the first Sobol' point*): descartar solo el origen desalinea los bloques diádicos y degrada la convergencia QMC de ~O(1/n) hacia O(n^(−1/2)). Verificado con y=10·x1 (índices exactos conocidos): a n=4096, el error con `skip(1)` era **peor que a n=64** con skip alineado (factores 25–2000×). El comentario "matching SALib's own handling" era falso (SALib salta 1024). Fix: `.skip(n.next_power_of_two())`. Test de regresión que falla con el skip viejo (err 0.0265 > umbral 0.005; con el fix, err ~2e-4). |
+| A3 | ✅ Resuelto | `swarm-py` no compilaba desde el rename del 2026-07-02 (E0659: `#[pymodule] fn swarm_abm` genera un módulo que colisiona con el crate externo renombrado `swarm_abm`). Los bindings Python estuvieron muertos 8 días — `docs/AUDIT.md` (P3-3) decía "verificado sin conflicto", cierto quizá con el rustc de entonces, falso hoy. Fix: `fn swarm_abm_py` + `#[pymodule(name = "swarm_abm")]` (el módulo Python conserva su nombre). |
+| A4 | ✅ Resuelto | Causa raíz de A3: ambos bindings están `exclude`d del workspace **y** ningún job de CI los compilaba — el "workspace en verde" del rename era verde porque el workspace no los contiene. Fix: job `bindings` en CI (`cargo check` de swarm-py — no necesita libpython — y `cargo check --target wasm32-unknown-unknown` de swarm-wasm). |
+| A5 | ⚠️ Resuelto en el árbol; **publicar 0.4.0 y decidir el yank de 0.3.0 quedan en manos del usuario** | Lo publicado en crates.io (0.3.0, única versión, no yanked, 17 descargas) contiene los 6 bugs F1–F6, y los fixes del 2026-07-05 violaron la política de `REPRODUCIBILITY.md` tres días después de escribirla: F3/F4 cambian los bits sin bump ni entrada de CHANGELOG, y F2 es un breaking de API con la misma versión en el árbol. Fix aplicado: bump del workspace a 0.4.0 (bindings por fin alineados — nacieron en 0.4.0), CHANGELOG reestructurado (la sección "[Sin publicar]" que en realidad era la 0.3.0 publicada ahora lo dice, con advertencia de F1–F6; sección nueva "[Sin publicar] — candidata a 0.4.0" con todo lo acumulado), y advertencia explícita en la entrada 0.3.0. |
+
+### Medios
+
+| Ítem | Estado | Hallazgo |
+|------|--------|----------|
+| M1 | ✅ Resuelto (doc) | `from_checkpoint` resetea `collect_every` a 1 en silencio — la misma familia que F2, en la pieza restante (verificado: eje `[0,3,6,7,8,9]` vs `[0,3,6,9]`). Se documentó en el docstring (con F2 el `Schedule` pasó a parámetro; un sexto parámetro era excesivo) + test de que el resume con `.with_collect_every(k)` re-aplicado mantiene el eje. |
+| M2 | ✅ Resuelto | Cuatro sitios de rustdoc (`Agent::apply`, `Ordered`, `Simultaneous`, `apply_phase`) prometían "insertion order", pre-arena P1-1. Con demografía el orden real es por slot (free-list LIFO): el recién nacido resuelve colisiones primero, no último (verificado: `[4,2,3]` vs `[2,3,4]` documentado). Redacción alineada con la canónica de `AgentSet`; también los dos `expect` de "historical" (agent.rs y continuous.rs) — el límite real es el pico concurrente de slots. |
+| M3 | ✅ Resuelto | `ContinuousSpace::wrap` toroidal podía devolver exactamente `width` (el hermano de P0-4 por otra vía: `rem_euclid` = `r + rhs` redondea a `rhs` cuando el residuo negativo es diminuto). Verificado: `wrap(-1e-15)` → `100.0`. Fix: normalizar a `0.0` (equivalente toroidal). |
+| M4 | ✅ Resuelto | Un solo NaN en las evaluaciones colapsaba **todos** los índices Sobol a 0.0 exacto (la rama `var_y > 0.0` pensada para modelo constante) — "nada es sensible" como salida aparentemente válida. Fix: `!var_y.is_finite()` → NaN en índices y CIs (el bootstrap además fuerza CI=(NaN,NaN) si el puntual es NaN, porque un resample podía excluir por azar las filas NaN). |
+| M5 | ✅ Resuelto | `swarm-wasm` recortaba la semilla a `u32`: corridas nativas con seed ≥ 2³² irreproducibles en el visor. Constructores a `u64`; el visor pasa `BigInt(seed)`. |
+| M6 | ✅ Resuelto | Versionado incoherente: bindings 0.4.0 vs motor publicado 0.3.0 (`swarm_abm.__version__` reportaba una versión inexistente del motor). Resuelto por el bump de A5. |
+| M7 | ✅ Resuelto | `Activation::Staged` solo se testeaba vía `step()`: los brazos duplicados a mano en las otras 3 variantes no tenían test (la clase exacta de regresión silenciosa de F1, con `Agent::step` no-op como default). Y `checkpoint.rs` no cubría `Simultaneous`/`Staged` — justo los casos que su propio docstring nombra. Tests nuevos: mismo modelo Staged bit-idéntico por los 4 entry points; checkpoint bajo Simultaneous y Staged con resume bit-exacto. |
+| M8 | ✅ Resuelto | Features sin CI: `experiment`/`serde` solo se testeaban en el job MSRV pineado, y el brazo secuencial de `evaluate_all` (el camino WASM declarado en el rustdoc de la feature) no se compilaba en **ningún** job. Añadido a CI: `cargo test -p swarm-abm --no-default-features --features experiment,serde` + clippy `--all-features` en stable. |
+| M9 | ✅ Resuelto | No existía golden test de trayectoria completa: `golden_values.rs` pinneaba primitivas RNG, así que un cambio en cómo el motor *consume* el stream pasaría con toda la suite en verde (P0-1 se descubrió por auditoría, no por test — la disciplina humana no basta). Nuevo golden: simulación entera (10×10 torus, 10 agentes, `Random`, semilla 42, 20 pasos), posiciones finales + hash FNV-1a pinneados como literales; corre también en el job wasm32. Su falla = ruptura del contrato: bump minor + CHANGELOG, no re-pinnear. |
+
+### Bajos
+
+Resueltos: radio no finito/astronómico en `for_each_within` (panic en debug,
+vacío silencioso en release → clamp de `cr`, INFINITY = todos los puntos);
+auto-inclusión de la celda propia en `neighbor_positions`/`random_neighbor`
+con ejes de dimensión 1 en torus (rompía la equivalencia documentada con
+`neighbor_positions_r` r=1; solo cambia grillas degeneradas — ejes ≥ 3
+bit-idénticos); `# Panics` faltantes en `graph.rs` + prosa "star of m+1
+nodes" en `barabasi_albert`; off-by-one flotante en `max_base_level` de
+Morris (`levels` ∈ {30, 88, 150, 182}, 607 valores hasta 10000 → aritmética
+entera `(levels-2)/2`); `sigma` de Morris con n−1 (SALib ddof=1) y NaN si
+n<2; los 4 ejemplos migrados a las primitivas propias de `rng` (network-sir
+usaba `random_bool` en la *dinámica*; los ejemplos son lo que un adoptante
+copia); portada de `lib.rs` (describía el motor v0.1) y
+`REPRODUCIBILITY.md` ("four pieces" → cinco, la omisión exacta que causó
+F2, más la nota de reporters/`collect_every`).
+
+Resuelto **en sentido inverso** (el hallazgo era correcto, el fix propuesto
+no): el doc de `compile_fail.rs` afirmaba que los `.stderr` no se fijan —
+trybuild los **exige** para tests `compile_fail` (sin ellos genera `wip/` y
+falla), así que se corrigió el comentario para asumir el pin y documentar
+`TRYBUILD=overwrite`; de paso se verificó que los `.stderr` commiteados son
+byte-idénticos a los que genera el rustc actual.
+
+### Diferido (documentado, no corregido)
+
+- **GIL retenido en `run()` de swarm-py**: el fix real
+  (`py.allow_threads`) no compila — los reporters de `DataCollector` son
+  `Box<dyn Fn(&M) -> f64>` sin bound `Send` (la razón del `unsendable`).
+  Requeriría `+ Send` en el motor; anotado con NOTE honesto en los 3 `run`
+  (los sweeps sí liberan el GIL). Candidato para la próxima ventana de
+  breaking changes.
+- Los pendientes menores de la 2ª pasada siguen vigentes, con una
+  precisión: "reporter agregado a media corrida desalinea el eje" en
+  realidad hace **panic** en `to_csv` (`col.values[i]` con columna corta) —
+  cubrir ambos síntomas al arreglarlo.
+- **Publicar 0.4.0 en crates.io** (y decidir el yank de 0.3.0): del
+  usuario. Hasta entonces, `cargo add swarm-abm` sirve la versión con
+  F1–F6.
+- **Re-correr el Sobol de SIGRID** con 0.4.0: A1/A2/F3/F4 cambian los
+  índices; con n=4096 el sesgo de skip es chico pero hay que cuantificarlo
+  (`models/sigrid/PARITY.md` pide re-validación).
+
+### Verificación de cierre
+
+`cargo build --workspace --all-features`, `cargo clippy --workspace
+--all-targets --all-features -- -D warnings`, `cargo test --workspace
+--all-features` (36 suites, 0 fallos; 77 unit tests en `swarm-abm` + 18 de
+integración en staged/checkpoint/golden), `cargo fmt --all --check` (limpio
+salvo `models/sigrid`, trabajo del usuario fuera de esta auditoría),
+`cargo check` de swarm-py (compila de nuevo) y de swarm-wasm en
+`wasm32-unknown-unknown`, `cargo doc -p swarm-abm --all-features
+--no-deps` sin warnings. Tests de regresión de A1/A2 verificados contra el
+código viejo (revirtiendo temporalmente el fix: fallan; con el fix: pasan).
+Categorías auditadas y limpias: determinismo del núcleo en los 5 caminos de
+step (incluida demografía con reuso de slots), arena generacional, Lemire
+en `uniform_below`, fórmulas S1/ST y apareamiento del bootstrap, LHS,
+`batch` completo, counting sort de `ContinuousSpace`, generadores de grafos
+en parámetros extremos, dispatch e higiene de la macro.
+
 ## Veredicto general
 
 El motor es pequeño, limpio y honesto: cero `unsafe`, `#![warn(missing_docs)]`

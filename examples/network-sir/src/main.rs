@@ -63,12 +63,12 @@ impl Agent for Person {
         match self.status {
             Status::Susceptible => {
                 let k = model.infected_neighbors(self.node);
-                if k > 0 && rng.random_bool(1.0 - (1.0 - model.beta).powi(k as i32)) {
+                if k > 0 && bernoulli(rng, 1.0 - (1.0 - model.beta).powi(k as i32)) {
                     self.status = Status::Infected;
                 }
             }
             Status::Infected => {
-                if rng.random_bool(model.gamma) {
+                if bernoulli(rng, model.gamma) {
                     self.status = Status::Recovered;
                 }
             }
@@ -110,7 +110,7 @@ fn build(net: Graph<()>, initial: usize, seed: u64) -> NetworkSir {
     // Infectar `initial` agentes al azar (RNG sembrado, reproducible).
     let mut rng = rng_from_seed(seed ^ 0x531A_5EED);
     let mut ids: Vec<AgentId> = agents.ids();
-    ids.shuffle(&mut rng);
+    shuffle(&mut rng, &mut ids);
     for &id in ids.iter().take(initial) {
         if let Some(p) = agents.get_mut(id) {
             p.status = Status::Infected;

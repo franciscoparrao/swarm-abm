@@ -6,7 +6,10 @@ use crate::rng::{SimRng, shuffle};
 /// Agent activation policy.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum Activation {
-    /// Insertion order, fixed across all steps (trivially deterministic).
+    /// Slot-index order — which equals insertion order until a removal is
+    /// followed by an insertion (see
+    /// [`AgentSet`](crate::agent::AgentSet)) — fixed across all steps
+    /// (trivially deterministic).
     Ordered,
     /// A new random permutation on each step, derived from the seeded RNG
     /// (deterministic given the seed). This is the default and the standard
@@ -17,8 +20,10 @@ pub enum Activation {
     /// [`Agent::decide`](crate::agent::Agent::decide) observing the same
     /// world state (immutable model), then all of them run
     /// [`Agent::apply`](crate::agent::Agent::apply). Both phases iterate
-    /// over agents in insertion order (like Mesa); the order only affects
-    /// the RNG stream and collision resolution in `apply`.
+    /// over agents in slot-index order — which equals insertion order (like
+    /// Mesa) until a removal is followed by an insertion (see
+    /// [`AgentSet`](crate::agent::AgentSet)); the order only affects the
+    /// RNG stream and collision resolution in `apply`.
     Simultaneous,
     /// **Staged** activation: `N` full sweeps per step, one for each value
     /// in `0..N`. In stage `s`, **all** agents run

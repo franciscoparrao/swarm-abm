@@ -61,7 +61,10 @@ fn build(width: usize, height: usize, n_walkers: usize, seed: u64) -> World {
     let mut rng = rng_from_seed(seed ^ 0xD1F0_55ED);
     let mut agents = AgentSet::with_capacity(n_walkers);
     for _ in 0..n_walkers {
-        let pos = Pos::new(rng.random_range(0..width), rng.random_range(0..height));
+        let pos = Pos::new(
+            uniform_usize(&mut rng, width),
+            uniform_usize(&mut rng, height),
+        );
         agents.insert(Walker { pos });
     }
     World {

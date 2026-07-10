@@ -35,7 +35,7 @@ impl Schelling {
     /// Crea el modelo sobre una grilla `size × size` toroidal.
     #[wasm_bindgen(constructor)]
     #[must_use]
-    pub fn new(size: usize, density: f64, tolerance: f64, seed: u32) -> Schelling {
+    pub fn new(size: usize, density: f64, tolerance: f64, seed: u64) -> Schelling {
         let cfg = schelling::SchellingConfig {
             width: size,
             height: size,
@@ -43,7 +43,7 @@ impl Schelling {
             tolerance,
         };
         Schelling {
-            sim: Simulation::new(schelling::build(cfg, u64::from(seed)), u64::from(seed)),
+            sim: Simulation::new(schelling::build(cfg, seed), seed),
         }
     }
 
@@ -107,7 +107,7 @@ impl Sir {
     /// Crea el modelo sobre una grilla `size × size` toroidal.
     #[wasm_bindgen(constructor)]
     #[must_use]
-    pub fn new(size: usize, beta: f64, gamma: f64, initial_infected: usize, seed: u32) -> Sir {
+    pub fn new(size: usize, beta: f64, gamma: f64, initial_infected: usize, seed: u64) -> Sir {
         let cfg = sir::SirConfig {
             width: size,
             height: size,
@@ -116,7 +116,7 @@ impl Sir {
             gamma,
         };
         Sir {
-            sim: Simulation::new(sir::build(cfg, u64::from(seed)), u64::from(seed)),
+            sim: Simulation::new(sir::build(cfg, seed), seed),
         }
     }
 
@@ -180,7 +180,7 @@ impl Sugarscape {
     /// Crea el modelo sobre una grilla `size × size` con `n_agents` agentes.
     #[wasm_bindgen(constructor)]
     #[must_use]
-    pub fn new(size: usize, n_agents: usize, growback: u32, seed: u32) -> Sugarscape {
+    pub fn new(size: usize, n_agents: usize, growback: u32, seed: u64) -> Sugarscape {
         let cfg = sugarscape::SugarscapeConfig {
             width: size,
             height: size,
@@ -188,7 +188,7 @@ impl Sugarscape {
             growback,
         };
         Sugarscape {
-            sim: Simulation::new(sugarscape::build(cfg, u64::from(seed)), u64::from(seed))
+            sim: Simulation::new(sugarscape::build(cfg, seed), seed)
                 .with_schedule(Schedule::new(Activation::Random)),
         }
     }

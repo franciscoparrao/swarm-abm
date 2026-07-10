@@ -130,18 +130,27 @@ impl<N, E> Graph<N, E> {
 
     /// Neighbors of a node, without weights (no allocation). For the edge
     /// data, see [`neighbors_weighted`](Self::neighbors_weighted).
+    ///
+    /// # Panics
+    /// If `node` is out of range (not issued by this graph).
     pub fn neighbors(&self, node: NodeId) -> impl Iterator<Item = NodeId> + '_ {
         self.adj[node.0].iter().map(|&(n, _)| n)
     }
 
     /// Neighbors of a node together with the data of the edge connecting
     /// them.
+    ///
+    /// # Panics
+    /// If `node` is out of range (not issued by this graph).
     pub fn neighbors_weighted(&self, node: NodeId) -> impl Iterator<Item = (NodeId, &E)> {
         self.adj[node.0].iter().map(|(n, w)| (*n, w))
     }
 
     /// Degree (number of neighbors) of the node. In a directed graph this
     /// is the out-degree (edges leaving `node`).
+    ///
+    /// # Panics
+    /// If `node` is out of range (not issued by this graph).
     #[must_use]
     pub fn degree(&self, node: NodeId) -> usize {
         self.adj[node.0].len()
@@ -200,6 +209,9 @@ impl<N, E> Graph<N, E> {
 
     /// A uniformly random neighbor, without allocation. `None` if the node
     /// is isolated.
+    ///
+    /// # Panics
+    /// If `node` is out of range (not issued by this graph).
     #[must_use]
     pub fn random_neighbor(&self, node: NodeId, rng: &mut SimRng) -> Option<NodeId> {
         let ns = &self.adj[node.0];
@@ -223,12 +235,17 @@ impl<N, E: Default + Clone> Graph<N, E> {
 impl<N, E> Index<NodeId> for Graph<N, E> {
     type Output = N;
 
+    /// # Panics
+    /// If `id` is out of range (use [`Graph::node`] for the safe variant).
     fn index(&self, id: NodeId) -> &N {
         &self.nodes[id.0]
     }
 }
 
 impl<N, E> IndexMut<NodeId> for Graph<N, E> {
+    /// # Panics
+    /// If `id` is out of range (use [`Graph::node_mut`] for the safe
+    /// variant).
     fn index_mut(&mut self, id: NodeId) -> &mut N {
         &mut self.nodes[id.0]
     }
@@ -272,6 +289,10 @@ impl<N: Default> Graph<N> {
     /// **Erdős–Rényi** G(n, p): each pair of nodes is connected with
     /// probability `p`. Mean degree ≈ `p·(n−1)`; degrees follow a Poisson
     /// distribution.
+    ///
+    /// # Panics
+    /// If `p` is not in `[0, 1]` (including NaN), via the assert of
+    /// [`bernoulli`](crate::rng::bernoulli).
     #[must_use]
     pub fn erdos_renyi(n: usize, p: f64, rng: &mut SimRng) -> Self {
         let mut g = Graph::from_fn(n, |_| N::default());
@@ -291,7 +312,9 @@ impl<N: Default> Graph<N> {
     /// high clustering).
     ///
     /// # Panics
-    /// If `2k >= n`. Also if `2k` is close enough to `n` that the resulting
+    /// If `2k >= n`, or if `beta` is not in `[0, 1]` (including NaN), via
+    /// the assert of [`bernoulli`](crate::rng::bernoulli). Also if `2k` is
+    /// close enough to `n` that the resulting
     /// graph approaches the complete graph (`n·k` close to `n·(n-1)/2`):
     /// the construction is greedy and may exhaust a node's valid
     /// destinations before finishing. This is not the intended usage
@@ -365,9 +388,10 @@ impl<N: Default> Graph<N> {
     }
 
     /// **Barabási–Albert**: growth with *preferential attachment*. Starts
-    /// with `m` nodes in a star and each new node connects to `m` existing
-    /// nodes with probability proportional to their degree. Produces a
-    /// *scale-free* network (heavy-tailed degree distribution, with hubs).
+    /// with a star of `m + 1` nodes (one center plus `m` leaves) and each
+    /// new node connects to `m` existing nodes with probability
+    /// proportional to their degree. Produces a *scale-free* network
+    /// (heavy-tailed degree distribution, with hubs).
     ///
     /// # Panics
     /// If `m == 0` or `m >= n`.

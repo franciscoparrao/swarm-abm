@@ -110,8 +110,10 @@ pub trait Agent: Sized {
     /// model what was decided in [`decide`](Self::decide). Does nothing by
     /// default.
     ///
-    /// Runs in insertion order; if two decisions collide (e.g. two agents
-    /// chose the same cell), resolve it here by re-checking.
+    /// Runs in slot-index order — which equals insertion order until a
+    /// removal is followed by an insertion (see [`AgentSet`]); if two
+    /// decisions collide (e.g. two agents chose the same cell), resolve it
+    /// here by re-checking.
     fn apply(&mut self, _id: AgentId, _model: &mut Self::Model, _rng: &mut SimRng) {}
 
     /// A single step of behavior under sequential activation. Runs
@@ -236,7 +238,11 @@ impl<A> AgentSet<A> {
                 generation: slot.generation,
             };
         }
-        let index = u32::try_from(self.slots.len()).expect("more than u32::MAX historical agents");
+        // The limit is on *slots* (peak concurrent population), not on
+        // historical insertions: the LIFO free list recycles indices, so
+        // `slots.len()` only grows when the live count sets a new peak.
+        let index =
+            u32::try_from(self.slots.len()).expect("more than u32::MAX concurrent agent slots");
         self.slots.push(Slot {
             generation: 0,
             state: SlotState::Occupied(agent),

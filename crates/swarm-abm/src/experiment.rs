@@ -164,14 +164,21 @@ pub fn sobol(specs: &[ParamSpec], n: usize) -> SobolDesign {
         "sobol supports 1 to 50 parameters, {d} were requested"
     );
     let params = sobol::params::JoeKuoD6::minimal();
-    // `.skip(1)`: the `sobol` crate's iterator yields the all-zeros origin
-    // as its first point. Splitting that point at `d` would give `A[0]` and
-    // `B[0]` (and every `AB_i[0]`) the identical lower-corner value —
-    // contaminating the `V(Y)` denominator with a duplicated point and
-    // biasing row 0 of every S1/ST sum. The bias is O(1/n) (invisible at
-    // large n, real at small n); skip it, matching SALib's own handling of
-    // this same Sobol' sequence property.
-    let seq = sobol::Sobol::<f64>::new(2 * d, &params).skip(1);
+    // Skip a dyadically-aligned block, not just the all-zeros origin.
+    // Dropping a single point is the anti-pattern of Owen (2020, "On
+    // dropping the first Sobol' point"): a block of `n` consecutive points
+    // that does not start at a multiple of 2^m is no longer a (t,m,s)-net,
+    // and the estimator's convergence degrades toward the plain-Monte-Carlo
+    // O(n^-1/2) rate (measured here: with `skip(1)`, the S1 error for
+    // y=10·x1 at n=4096 was *worse* than at n=64 with an aligned skip).
+    // Skipping `n.next_power_of_two()` points keeps the taken block
+    // `[2^m, 2^m + n)` dyadically aligned (exactly `[2^m, 2^{m+1})` when
+    // `n` is itself a power of two) and, as a side effect, still drops the
+    // problematic all-zeros origin, which would otherwise give `A[0]`,
+    // `B[0]` and every `AB_i[0]` the identical lower-corner value.
+    // (SALib does the equivalent: it skips 1024 points — a power of two —
+    // not 1.)
+    let seq = sobol::Sobol::<f64>::new(2 * d, &params).skip(n.next_power_of_two());
     let mut a = Vec::with_capacity(n);
     let mut b = Vec::with_capacity(n);
     for point in seq.take(n) {
@@ -323,15 +330,21 @@ fn compute_indices(
             sum_s1 += y_b[j] * (y_ab[i][j] - y_a[j]);
             sum_st += (y_a[j] - y_ab[i][j]).powi(2);
         }
-        s1[i] = if var_y > 0.0 {
-            (sum_s1 / n) / var_y
+        // Three cases, deliberately distinguished:
+        // - `var_y` non-finite (some evaluation returned NaN/±inf): the
+        //   indices are undefined — propagate NaN honestly instead of
+        //   silently collapsing everything to 0.0 (which would read as "no
+        //   parameter matters" when the truth is "the model blew up").
+        // - `var_y == 0.0` (constant model): every index is genuinely 0.
+        // - otherwise: the Saltelli/Jansen estimators. Note a NaN confined
+        //   to `y_ab[i]` still propagates through `sum_s1`/`sum_st` to that
+        //   parameter's indices even when `var_y` is finite.
+        (s1[i], st[i]) = if !var_y.is_finite() {
+            (f64::NAN, f64::NAN)
+        } else if var_y > 0.0 {
+            ((sum_s1 / n) / var_y, (sum_st / (2.0 * n)) / var_y)
         } else {
-            0.0
-        };
-        st[i] = if var_y > 0.0 {
-            (sum_st / (2.0 * n)) / var_y
-        } else {
-            0.0
+            (0.0, 0.0)
         };
     }
     (s1, st)
@@ -375,12 +388,26 @@ fn sobol_indices_with_bootstrap(
             st_boot[i].push(st_b[i]);
         }
     }
-    let conf_of = |boot: &mut [f64]| -> (f64, f64) {
+    let conf_of = |boot: &mut [f64], point_estimate: f64| -> (f64, f64) {
+        // A NaN point estimate means some evaluation was non-finite; a
+        // bootstrap resample can exclude the offending rows by chance and
+        // yield a misleadingly finite interval — propagate NaN instead.
+        if point_estimate.is_nan() {
+            return (f64::NAN, f64::NAN);
+        }
         boot.sort_by(f64::total_cmp);
         (percentile(boot, 0.025), percentile(boot, 0.975))
     };
-    let s1_conf: Vec<(f64, f64)> = s1_boot.into_iter().map(|mut v| conf_of(&mut v)).collect();
-    let st_conf: Vec<(f64, f64)> = st_boot.into_iter().map(|mut v| conf_of(&mut v)).collect();
+    let s1_conf: Vec<(f64, f64)> = s1_boot
+        .into_iter()
+        .zip(&s1)
+        .map(|(mut v, &e)| conf_of(&mut v, e))
+        .collect();
+    let st_conf: Vec<(f64, f64)> = st_boot
+        .into_iter()
+        .zip(&st)
+        .map(|(mut v, &e)| conf_of(&mut v, e))
+        .collect();
 
     SobolResult {
         names: names.to_vec(),
@@ -436,7 +463,7 @@ pub fn morris(
 
     // Valid base levels: those that leave room for a +delta step without
     // going outside [0,1] (l/max_level + delta <= 1).
-    let max_base_level = ((max_level as f64) * (1.0 - delta)).floor() as u64;
+    let max_base_level = max_base_level(levels);
 
     let mut trajectories = Vec::with_capacity(n_trajectories);
     for _ in 0..n_trajectories {
@@ -465,6 +492,18 @@ pub fn morris(
     }
 }
 
+/// Largest base level `l` such that `l/max_level + delta <= 1`, i.e. a
+/// `+delta` step from level `l` stays inside `[0,1]`. With
+/// `delta = levels / (2·(levels-1))` and `max_level = levels-1`:
+/// `l <= max_level·(1-delta) = (levels-1) - levels/2 = (levels-2)/2`,
+/// which integer division computes exactly for even and odd `levels`.
+/// (The previous float formula `(max_level·(1-delta)).floor()` fell one
+/// level short for `levels ∈ {30, 88, 150, 182, …}` due to rounding.)
+fn max_base_level(levels: usize) -> u64 {
+    debug_assert!(levels >= 2);
+    (levels as u64 - 2) / 2
+}
+
 /// Elementary-effect statistics for a parameter (see [`morris`]).
 #[derive(Debug, Clone)]
 pub struct MorrisResult {
@@ -477,15 +516,29 @@ pub struct MorrisResult {
     /// influence measure robust to sign cancellation, the one most
     /// commonly used in practice to rank parameters.
     pub mu_star: f64,
-    /// Standard deviation of the elementary effects: high ⇒ the
-    /// parameter's effect depends strongly on where in the space it is
-    /// measured (nonlinearity and/or interaction with other parameters).
+    /// **Sample** standard deviation (`n-1` denominator, matching Morris
+    /// 1991 / Campolongo 2007 / SALib's `ddof=1`) of the elementary
+    /// effects: high ⇒ the parameter's effect depends strongly on where in
+    /// the space it is measured (nonlinearity and/or interaction with
+    /// other parameters). `NaN` with fewer than 2 trajectories (a single
+    /// elementary effect has no dispersion to estimate).
     pub sigma: f64,
 }
 
 impl MorrisDesign {
     /// Evaluates the model at all points of all trajectories and computes
     /// `mu`/`mu_star`/`sigma` per parameter.
+    ///
+    /// **Common random numbers.** All `d+1` points of the *same* trajectory
+    /// share one seed (derived deterministically from `base_seed` and the
+    /// trajectory index via [`child_rng`]); distinct trajectories get
+    /// independent, decorrelated seeds. An elementary effect
+    /// `EE = (y(x+Δe_i) − y(x)) / Δ` compares two consecutive points of one
+    /// trajectory — under CRN both run the identical stochastic realization
+    /// save for parameter `i`, so the difference is attributable to that
+    /// parameter. With per-point seeds (the earlier bug, the exact mirror
+    /// of the Sobol' CRN finding), the EE of an inert parameter is pure
+    /// noise, inflating its `mu_star`/`sigma` from ~0 to O(σ_noise/Δ).
     pub fn run<M, B, O>(
         &self,
         base_seed: u64,
@@ -499,22 +552,22 @@ impl MorrisDesign {
         O: Fn(&Simulation<M>) -> f64 + Sync,
     {
         let d = self.specs.len();
-        let mut flat: Vec<Vec<f64>> = Vec::new();
-        for (points, _) in &self.trajectories {
+        // One seed per trajectory (CRN, see the doc comment above), derived
+        // through `child_rng`'s domain-separated chain-hash — the same
+        // mechanism `SobolDesign::run` uses for its row seeds.
+        let mut seeded: Vec<(Vec<f64>, u64)> = Vec::new();
+        for (t, (points, _)) in self.trajectories.iter().enumerate() {
+            let traj_seed = child_rng(base_seed, 0, t as u64).next_u64();
             for p in points {
-                flat.push(
+                seeded.push((
                     p.iter()
                         .zip(&self.specs)
                         .map(|(&u, s)| s.scale(u))
                         .collect(),
-                );
+                    traj_seed,
+                ));
             }
         }
-        let seeded: Vec<(Vec<f64>, u64)> = flat
-            .into_iter()
-            .enumerate()
-            .map(|(idx, p)| (p, base_seed.wrapping_add(idx as u64)))
-            .collect();
         let ys = evaluate_all(&seeded, max_steps, &build, &outcome);
 
         let mut ee: Vec<Vec<f64>> = vec![Vec::new(); d];
@@ -535,7 +588,14 @@ impl MorrisDesign {
                 let n = vals.len() as f64;
                 let mu = vals.iter().sum::<f64>() / n;
                 let mu_star = vals.iter().map(|v| v.abs()).sum::<f64>() / n;
-                let var = vals.iter().map(|v| (v - mu).powi(2)).sum::<f64>() / n;
+                // Sample variance (n-1): the method's standard (Morris
+                // 1991, Campolongo 2007, SALib ddof=1). Undefined (NaN)
+                // with a single elementary effect.
+                let var = if vals.len() < 2 {
+                    f64::NAN
+                } else {
+                    vals.iter().map(|v| (v - mu).powi(2)).sum::<f64>() / (n - 1.0)
+                };
                 MorrisResult {
                     name: self.specs[i].name.clone(),
                     mu,
@@ -544,5 +604,46 @@ impl MorrisDesign {
                 }
             })
             .collect()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::max_base_level;
+
+    /// Regresión (hallazgo de auditoría L4): la fórmula flotante anterior
+    /// `((max_level as f64) * (1.0 - delta)).floor()` caía un nivel por
+    /// debajo del entero exacto `(levels-2)/2` para
+    /// `levels ∈ {30, 88, 150, 182}` (p. ej. con `levels = 30` daba 13 en
+    /// vez de 14, excluyendo silenciosamente el nivel base 14 del muestreo
+    /// de Morris). La versión entera es exacta por construcción.
+    #[test]
+    fn max_base_level_es_exacto_para_los_niveles_que_la_version_flotante_fallaba() {
+        for &(levels, esperado) in &[
+            (2usize, 0u64),
+            (3, 0),
+            (4, 1),
+            (5, 1),
+            (30, 14),
+            (88, 43),
+            (150, 74),
+            (182, 90),
+        ] {
+            assert_eq!(max_base_level(levels), esperado, "levels = {levels}");
+
+            // Coherencia con la definición: desde el nivel base máximo, el
+            // paso +delta se queda dentro de [0,1] (con tolerancia de
+            // redondeo — la suma flotante 14/29 + 15/29 puede exceder 1.0
+            // por un ULP, exactamente el artefacto que rompía la fórmula
+            // flotante)...
+            let max_level = (levels - 1) as f64;
+            let delta = levels as f64 / (2.0 * max_level);
+            let x = max_base_level(levels) as f64 / max_level;
+            assert!(x + delta <= 1.0 + 1e-12, "levels = {levels}: {x} + {delta}");
+
+            // ...y desde el nivel siguiente ya no (maximalidad).
+            let x_next = (max_base_level(levels) + 1) as f64 / max_level;
+            assert!(x_next + delta > 1.0 + 1e-12, "levels = {levels}");
+        }
     }
 }

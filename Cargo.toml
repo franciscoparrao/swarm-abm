@@ -23,7 +23,7 @@ members = [
 exclude = ["crates/swarm-py", "crates/swarm-wasm", "validation/krabmaga-bench"]
 
 [workspace.package]
-version = "0.3.0"
+version = "0.4.0"
 edition = "2024"
 license = "MIT OR Apache-2.0"
 repository = "https://github.com/franciscoparrao/swarm-abm"
@@ -41,8 +41,8 @@ rust-version = "1.87"
 # `version` is required alongside `path` so `cargo publish` can emit a
 # publishable dependency (crates.io rejects path-only deps with no version
 # requirement) — see P3-3 in docs/AUDIT.md.
-swarm-abm = { path = "crates/swarm-abm", version = "0.3.0" }
-swarm-abm-derive = { path = "crates/swarm-abm-derive", version = "0.3.0" }
+swarm-abm = { path = "crates/swarm-abm", version = "0.4.0" }
+swarm-abm-derive = { path = "crates/swarm-abm-derive", version = "0.4.0" }
 swarm-models = { path = "crates/swarm-models" }
 # Sin default-features: el motor solo usa RNG sembrado (ChaCha8), no necesita
 # std_rng/os_rng/thread_rng (que arrastran getrandom y no compilan en wasm).

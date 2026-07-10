@@ -131,6 +131,17 @@ sentence in a README.
   affects simulation results (insertion-ordered collections, or explicit
   sorting, if order matters).
 - If you need a checkpoint/restore (`Simulation::from_checkpoint`, feature
-  `serde`), the four pieces that fully determine future behavior are the
-  model state, the original seed, the current `SimRng` state, and the step
-  count — see `sim.rs` and `tests/checkpoint.rs`.
+  `serde`), the five pieces that fully determine future behavior are the
+  model state, the original seed, the current `SimRng` state, the step
+  count, and the `Schedule` that was in effect. The first four are what
+  you serialize; the `Schedule` is a required parameter of
+  `from_checkpoint` rather than part of the serialized state (it's `Copy`
+  — keep it around or re-derive it), because silently resuming under the
+  wrong activation policy would produce a run that looks bit-exact but
+  diverges from the original. Note that reporters and `collect_every` do
+  **not** travel in the checkpoint: reporters are closures (not
+  serializable in general) and already-collected series are not restored,
+  so re-register the reporters you need (`add_reporter`/
+  `add_agent_reporter`) and re-apply your `collect_every` setting after
+  reconstructing — see the `from_checkpoint` docs in `sim.rs` and
+  `tests/checkpoint.rs`.

@@ -81,9 +81,15 @@ impl<M: Model> Simulation<M> {
     /// Re-register the ones you need with
     /// [`add_reporter`](Self::add_reporter)/
     /// [`add_agent_reporter`](Self::add_agent_reporter) after
-    /// reconstructing. The initial state (step 0) is considered already
-    /// collected in the previous session — `run`/`step` on the
-    /// reconstructed simulation will not capture it again.
+    /// reconstructing. The collection stride is **not** restored either:
+    /// it silently resets to `1`, so if the original run used
+    /// [`with_collect_every`](Self::with_collect_every), chain
+    /// `.with_collect_every(k)` with the **same** `k` on the reconstructed
+    /// simulation — otherwise the resumed run collects every step and its
+    /// data axis diverges from the uninterrupted run's. The initial state
+    /// (step 0) is considered already collected in the previous session —
+    /// `run`/`step` on the reconstructed simulation will not capture it
+    /// again.
     #[must_use]
     pub fn from_checkpoint(
         model: M,
@@ -247,8 +253,10 @@ impl<M: Model> Simulation<M> {
     }
 
     /// Simultaneous `apply` phase (always sequential): materializes what
-    /// was decided and resolves collisions in insertion order. Agents
-    /// created in `apply` only become active on the following step.
+    /// was decided and resolves collisions in slot-index order — which
+    /// equals insertion order until a removal is followed by an insertion
+    /// (see [`AgentSet`](crate::agent::AgentSet)). Agents created in
+    /// `apply` only become active on the following step.
     fn apply_phase(&mut self) {
         for i in 0..self.order_buf.len() {
             let id = self.order_buf[i];
@@ -622,5 +630,67 @@ mod tests {
     #[should_panic(expected = "collect_every must be > 0")]
     fn with_collect_every_cero_panica() {
         let _ = Simulation::new(mundo(1, u64::MAX), 1).with_collect_every(0);
+    }
+
+    #[test]
+    fn from_checkpoint_con_collect_every_reaplicado_mantiene_el_eje() {
+        // Regression (audit M1): `from_checkpoint` resets `collect_every`
+        // to 1, so a resumed run must re-apply `.with_collect_every(k)`
+        // with the same `k` as the original run to keep the data axis
+        // aligned with the uninterrupted one (documented contract).
+
+        // Uninterrupted run: 12 steps, collecting every 3.
+        let mut completa = Simulation::new(mundo(2, u64::MAX), 7).with_collect_every(3);
+        completa.add_reporter("total", |m: &Mundo| m.total as f64);
+        completa.run(12);
+        assert_eq!(completa.data().steps(), &[0, 3, 6, 9, 12]);
+
+        // Interrupted run: 6 steps, checkpoint, resume for 6 more with
+        // the SAME stride re-applied.
+        let mut primera = Simulation::new(mundo(2, u64::MAX), 7).with_collect_every(3);
+        primera.add_reporter("total", |m: &Mundo| m.total as f64);
+        primera.run(6);
+        let rng = primera.rng_state().clone();
+        let (seed, steps) = (primera.seed(), primera.step_count());
+        // Own copies of the pre-checkpoint data: `from_checkpoint` takes
+        // the model by value, consuming `primera`.
+        let eje_previo: Vec<u64> = primera.data().steps().to_vec();
+        let serie_previa: Vec<f64> = primera
+            .data()
+            .series("total")
+            .expect("reporter registrado")
+            .to_vec();
+        let mut reanudada =
+            Simulation::from_checkpoint(primera.model, seed, rng, steps, Schedule::default())
+                .with_collect_every(3);
+        reanudada.add_reporter("total", |m: &Mundo| m.total as f64);
+        reanudada.run(6);
+
+        // The concatenated axes reproduce the uninterrupted axis exactly.
+        let eje: Vec<u64> = eje_previo
+            .iter()
+            .chain(reanudada.data().steps())
+            .copied()
+            .collect();
+        assert_eq!(eje.as_slice(), completa.data().steps());
+
+        // And the series values match too (2 agents, +2 per step).
+        let serie: Vec<f64> = serie_previa
+            .iter()
+            .chain(
+                reanudada
+                    .data()
+                    .series("total")
+                    .expect("reporter registrado"),
+            )
+            .copied()
+            .collect();
+        assert_eq!(
+            serie.as_slice(),
+            completa
+                .data()
+                .series("total")
+                .expect("reporter registrado")
+        );
     }
 }

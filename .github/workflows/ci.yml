@@ -34,11 +34,19 @@ jobs:
       - name: Clippy (sin features por defecto, camino WASM/secuencial)
         run: cargo clippy -p swarm-abm --no-default-features --all-targets -- -D warnings
 
+      - name: Clippy (todas las features)
+        run: cargo clippy --workspace --all-targets --all-features -- -D warnings
+
       - name: Tests
         run: cargo test --workspace
 
       - name: Tests (sin features por defecto)
         run: cargo test -p swarm-abm --no-default-features
+
+      # Covers the sequential arm of `evaluate_all` (experiment without
+      # rayon), the declared WASM path, which no other job compiles.
+      - name: Tests (experiment+serde sin parallel)
+        run: cargo test -p swarm-abm --no-default-features --features experiment,serde
 
       - name: Docs (los warnings de rustdoc fallan el build)
         env:
@@ -70,6 +78,35 @@ jobs:
         run: |
           cargo test --target wasm32-wasip1 -p swarm-abm --no-default-features --test golden_values
           cargo test --target wasm32-wasip1 -p swarm-abm --no-default-features --test determinism
+
+  bindings:
+    name: bindings (swarm-py · swarm-wasm)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust toolchain (+ wasm32-unknown-unknown)
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+
+      # Both crates are excluded from the workspace (each has its own
+      # lockfile), so cargo runs from each crate's directory and the cache
+      # tracks both trees.
+      - name: Cache cargo build
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: |
+            crates/swarm-py
+            crates/swarm-wasm
+
+      - name: Check swarm-py (compila sin libpython)
+        working-directory: crates/swarm-py
+        run: cargo check
+
+      - name: Check swarm-wasm (target wasm32-unknown-unknown)
+        working-directory: crates/swarm-wasm
+        run: cargo check --target wasm32-unknown-unknown
 
   msrv:
     name: MSRV (1.87 — swarm-abm / swarm-abm-derive)

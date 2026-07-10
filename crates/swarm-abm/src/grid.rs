@@ -177,7 +177,9 @@ impl<'g, T> Iterator for NeighborsR<'g, T> {
 ///
 /// With `torus = true` the edges connect (toroidal world, NetLogo style).
 /// On toroidal grids with dimension < 3, neighboring positions may repeat
-/// (the wrap collides).
+/// (distinct offsets wrap to the same cell); the cell itself is never
+/// among them (offsets that wrap back onto the queried position are
+/// skipped, same criterion as [`NeighborsR`]).
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct Grid2D<T> {
@@ -306,6 +308,16 @@ impl<T> Grid2D<T> {
         let mut len = 0u8;
         for &(dx, dy) in offsets {
             if let Some(p) = self.offset(pos, dx, dy) {
+                if p == pos {
+                    // On a torus with some axis of dimension 1, a radius-1
+                    // offset can wrap back onto `pos` itself; the cell is
+                    // not its own neighbor. Compare the ALREADY-WRAPPED
+                    // position, the same criterion as `NeighborsR` (audit
+                    // L2: without this, a 1×5 torus returned the queried
+                    // cell among its own neighbors, and `random_neighbor`
+                    // could pick it).
+                    continue;
+                }
                 buf[len as usize] = p;
                 len += 1;
             }
@@ -318,7 +330,8 @@ impl<T> Grid2D<T> {
     /// Equivalent to collecting [`neighbor_positions`](Self::neighbor_positions)
     /// and picking a random index (consumes a single RNG draw), but without
     /// the intermediate `Vec` — important in hot loops with many agents.
-    /// Returns `None` if the position has no neighbors (1×1 grid without torus).
+    /// Returns `None` if the position has no neighbors (1×1 grid, with or
+    /// without torus).
     #[must_use]
     pub fn random_neighbor(
         &self,
@@ -792,5 +805,48 @@ mod tests {
     fn index_fuera_de_rango_panic() {
         let g: Grid2D<u8> = Grid2D::new(2, 2);
         let _ = g[Pos::new(5, 5)];
+    }
+
+    #[test]
+    fn torus_degenerado_no_incluye_la_propia_celda() {
+        // Regression (audit L2): on a 1×5 torus, the ±1 offsets along the
+        // degenerate axis wrap back onto the queried cell, and
+        // `neighbor_positions` used to include it (twice). It must be
+        // skipped, matching both the "the cell itself is not a neighbor"
+        // contract and the set `neighbor_positions_r` yields at r=1.
+        let g: Grid2D<u8> = Grid2D::new(1, 5).with_torus(true);
+        let centro = Pos::new(0, 2);
+        let v = posiciones(&g, centro, Neighborhood::VonNeumann);
+        assert_eq!(v, HashSet::from([Pos::new(0, 1), Pos::new(0, 3)]));
+        let r1: HashSet<Pos> = g
+            .neighbor_positions_r(centro, Neighborhood::VonNeumann, 1)
+            .collect();
+        assert_eq!(v, r1, "r=1 must match neighbor_positions");
+    }
+
+    #[test]
+    fn torus_uno_por_uno_no_tiene_vecinas() {
+        use crate::rng::rng_from_seed;
+        let g: Grid2D<u8> = Grid2D::new(1, 1).with_torus(true);
+        let p = Pos::new(0, 0);
+        for nh in [Neighborhood::Moore, Neighborhood::VonNeumann] {
+            assert_eq!(g.neighbor_positions(p, nh).len(), 0, "{nh:?}");
+            assert_eq!(g.random_neighbor(p, nh, &mut rng_from_seed(1)), None);
+        }
+    }
+
+    #[test]
+    fn random_neighbor_en_torus_degenerado_nunca_devuelve_la_propia_celda() {
+        use crate::rng::rng_from_seed;
+        let g: Grid2D<u8> = Grid2D::new(1, 5).with_torus(true);
+        let centro = Pos::new(0, 2);
+        let mut rng = rng_from_seed(3);
+        for _ in 0..200 {
+            let p = g
+                .random_neighbor(centro, Neighborhood::VonNeumann, &mut rng)
+                .expect("there are neighbors");
+            assert_ne!(p, centro, "the cell itself is not a neighbor");
+            assert!([Pos::new(0, 1), Pos::new(0, 3)].contains(&p));
+        }
     }
 }

@@ -54,6 +54,12 @@ impl PySir {
 
     /// Avanza la simulación hasta `steps` pasos (o hasta que no queden
     /// infectados). Devuelve cuántos pasos se ejecutaron realmente.
+    ///
+    /// NOTE: this holds the GIL while the Rust loop runs. Releasing it via
+    /// `py.allow_threads` does not compile: the closure must be `Send`, but
+    /// `Simulation` holds non-`Send` boxed reporter closures
+    /// (`Box<dyn Fn(&M) -> f64>` in `DataCollector`), which is also why the
+    /// pyclass is `unsendable`. The parallel sweeps below do release the GIL.
     fn run(&mut self, steps: u64) -> u64 {
         self.sim.run(steps)
     }
@@ -180,6 +186,9 @@ impl PySchelling {
     }
 
     /// Avanza hasta `steps` pasos (o hasta que todos estén conformes).
+    ///
+    /// NOTE: holds the GIL while running; `py.allow_threads` does not compile
+    /// because `Simulation` holds non-`Send` boxed reporters (see `PySir::run`).
     fn run(&mut self, steps: u64) -> u64 {
         self.sim.run(steps)
     }
@@ -235,6 +244,9 @@ impl PySugarscape {
     }
 
     /// Avanza hasta `steps` pasos (o hasta que la población se extinga).
+    ///
+    /// NOTE: holds the GIL while running; `py.allow_threads` does not compile
+    /// because `Simulation` holds non-`Send` boxed reporters (see `PySir::run`).
     fn run(&mut self, steps: u64) -> u64 {
         self.sim.run(steps)
     }
@@ -350,8 +362,13 @@ fn sugarscape_sweep(
 }
 
 /// Módulo de extensión `swarm_abm`.
-#[pymodule]
-fn swarm_abm(m: &Bound<'_, PyModule>) -> PyResult<()> {
+///
+/// The Rust function is named `swarm_abm_py` because `#[pymodule]` generates a
+/// root item with the function's name, which would collide (E0659) with the
+/// external `swarm_abm` crate (the engine). `#[pymodule(name = "swarm_abm")]`
+/// keeps the Python module name as `swarm_abm`.
+#[pymodule(name = "swarm_abm")]
+fn swarm_abm_py(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<PySir>()?;
     m.add_class::<PySchelling>()?;
     m.add_class::<PySugarscape>()?;
