@@ -1,0 +1,499 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<style>*, *::before, *::after { box-sizing: border-box; }</style>
+<title>swarm-abm — Motor de simulación basada en agentes en Rust</title>
+<style>
+  :root {
+    --bg: #f4f8f7;
+    --card: #ffffff;
+    --ink: #1a2b29;
+    --muted: #57706d;
+    --accent: #0e6e65;
+    --accent-soft: #0e6e6514;
+    --copper: #a85a32;
+    --line: #d5e2df;
+    --code-bg: #eaf1ef;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #0f1715;
+      --card: #16211e;
+      --ink: #e2edea;
+      --muted: #90a7a3;
+      --accent: #4cc2b4;
+      --accent-soft: #4cc2b41f;
+      --copper: #d99268;
+      --line: #253531;
+      --code-bg: #1d2b27;
+    }
+  }
+  :root[data-theme="dark"] {
+    --bg: #0f1715;
+    --card: #16211e;
+    --ink: #e2edea;
+    --muted: #90a7a3;
+    --accent: #4cc2b4;
+    --accent-soft: #4cc2b41f;
+    --copper: #d99268;
+    --line: #253531;
+    --code-bg: #1d2b27;
+  }
+  :root[data-theme="light"] {
+    --bg: #f4f8f7;
+    --card: #ffffff;
+    --ink: #1a2b29;
+    --muted: #57706d;
+    --accent: #0e6e65;
+    --accent-soft: #0e6e6514;
+    --copper: #a85a32;
+    --line: #d5e2df;
+    --code-bg: #eaf1ef;
+  }
+
+  body {
+    background: var(--bg);
+    color: var(--ink);
+    font-family: Charter, "Bitstream Charter", "Iowan Old Style", Georgia, "Times New Roman", serif;
+    font-size: 17px;
+    line-height: 1.65;
+    margin: 0;
+  }
+  .wrap { max-width: 900px; margin: 0 auto; padding: 0 24px 72px; }
+
+  h1, h2, h3, .sans {
+    font-family: "Avenir Next", "Segoe UI", "Helvetica Neue", Helvetica, Arial, sans-serif;
+  }
+  code, .mono {
+    font-family: ui-monospace, "SF Mono", "Cascadia Code", Menlo, Consolas, monospace;
+    font-size: 0.88em;
+  }
+  code { background: var(--code-bg); padding: 0.1em 0.35em; border-radius: 4px; }
+
+  /* ---------- header ---------- */
+  header {
+    padding: 56px 0 36px;
+    border-bottom: 1px solid var(--line);
+    background:
+      linear-gradient(to right, var(--line) 1px, transparent 1px) 0 0 / 36px 36px,
+      linear-gradient(to bottom, var(--line) 1px, transparent 1px) 0 0 / 36px 36px;
+    background-color: var(--bg);
+    -webkit-mask-image: linear-gradient(to bottom, black 55%, transparent);
+    mask-image: linear-gradient(to bottom, black 62%, black);
+  }
+  .eyebrow {
+    font-size: 12px; letter-spacing: 0.14em; text-transform: uppercase;
+    color: var(--accent); font-weight: 600; margin: 0 0 14px;
+  }
+  h1 {
+    font-size: clamp(34px, 6vw, 52px);
+    font-weight: 700; letter-spacing: -0.02em; line-height: 1.05;
+    margin: 0 0 12px; text-wrap: balance;
+  }
+  h1 .mono-name { font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace; }
+  .subtitle {
+    font-size: clamp(17px, 2.4vw, 20px); color: var(--muted);
+    max-width: 62ch; margin: 0; text-wrap: balance;
+  }
+
+  /* ---------- stat strip ---------- */
+  .stats {
+    display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+    gap: 12px; margin: 32px 0 0;
+  }
+  .stat {
+    background: var(--card); border: 1px solid var(--line);
+    padding: 14px 16px 12px;
+  }
+  .stat b {
+    display: block; font-family: "Avenir Next", "Segoe UI", "Helvetica Neue", Arial, sans-serif;
+    font-size: 26px; font-weight: 700; letter-spacing: -0.01em;
+    font-variant-numeric: tabular-nums; color: var(--accent);
+  }
+  .stat span { font-size: 13px; color: var(--muted); line-height: 1.35; display: block; margin-top: 2px; }
+
+  /* ---------- sections ---------- */
+  section { margin-top: 52px; }
+  h2 {
+    font-size: 22px; font-weight: 700; letter-spacing: -0.01em;
+    margin: 0 0 6px; text-wrap: balance;
+  }
+  .kicker {
+    font-size: 11.5px; letter-spacing: 0.14em; text-transform: uppercase;
+    color: var(--muted); font-weight: 600; margin: 0 0 6px;
+    font-family: "Avenir Next", "Segoe UI", Arial, sans-serif;
+  }
+  section > p { max-width: 68ch; margin: 10px 0; }
+  section p + p { margin-top: 12px; }
+
+  /* ---------- tres espacios ---------- */
+  .spaces { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 14px; margin-top: 20px; }
+  .space {
+    background: var(--card); border: 1px solid var(--line); padding: 18px;
+  }
+  .space svg { display: block; width: 100%; height: 84px; margin-bottom: 12px; }
+  .space h3 { font-size: 15.5px; font-weight: 600; margin: 0 0 4px; }
+  .space p { font-size: 14px; color: var(--muted); margin: 0; line-height: 1.5; }
+  .svg-line { stroke: var(--line); }
+  .svg-accent { fill: var(--accent); }
+  .svg-accent-line { stroke: var(--accent); }
+  .svg-muted { fill: var(--muted); }
+
+  /* ---------- tabla de evidencia ---------- */
+  .tablewrap { overflow-x: auto; margin-top: 18px; border: 1px solid var(--line); background: var(--card); }
+  table { border-collapse: collapse; width: 100%; font-size: 14.5px; }
+  th, td { text-align: left; padding: 10px 16px; border-bottom: 1px solid var(--line); vertical-align: top; }
+  tr:last-child td { border-bottom: none; }
+  th {
+    font-family: "Avenir Next", "Segoe UI", Arial, sans-serif;
+    font-size: 11.5px; letter-spacing: 0.1em; text-transform: uppercase;
+    color: var(--muted); font-weight: 600; border-bottom: 1px solid var(--line);
+  }
+  td.num { font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace; font-size: 13.5px; white-space: nowrap; color: var(--copper); font-weight: 500; }
+
+  /* ---------- casos ---------- */
+  .cases { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 14px; margin-top: 18px; }
+  .case {
+    background: var(--card); border: 1px solid var(--line);
+    border-top: 3px solid var(--accent); padding: 20px;
+  }
+  .case h3 { font-size: 16px; font-weight: 600; margin: 0 0 8px; }
+  .case p { font-size: 14.5px; color: var(--muted); margin: 0 0 8px; line-height: 1.55; }
+  .case p:last-child { margin-bottom: 0; }
+  .case .fig { color: var(--copper); font-weight: 500; }
+
+  /* ---------- contrato de determinismo ---------- */
+  .contract {
+    background: var(--accent-soft); border-left: 3px solid var(--accent);
+    padding: 18px 22px; margin-top: 18px; max-width: 72ch;
+  }
+  .contract p { margin: 0 0 10px; font-size: 15.5px; }
+  .contract p:last-child { margin-bottom: 0; }
+
+  /* ---------- stack: decisiones técnicas ---------- */
+  .stack { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 14px; margin-top: 20px; }
+  .decision {
+    background: var(--card); border: 1px solid var(--line); padding: 18px 20px;
+    display: flex; flex-direction: column; gap: 6px;
+  }
+  .decision .tag {
+    font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+    font-size: 11px; letter-spacing: 0.04em; color: var(--copper); font-weight: 500;
+  }
+  .decision h3 { font-size: 15.5px; font-weight: 600; margin: 0; }
+  .decision p { font-size: 14px; color: var(--muted); margin: 0; line-height: 1.5; }
+  .decision .why {
+    font-size: 13px; color: var(--ink); margin-top: 2px;
+    padding-top: 8px; border-top: 1px solid var(--line);
+  }
+
+  /* ---------- límites (honestidad de alcance) ---------- */
+  .limits {
+    border-left: 3px solid var(--copper); background: color-mix(in srgb, var(--copper) 7%, transparent);
+    padding: 16px 22px; margin-top: 20px; max-width: 72ch;
+  }
+  .limits .kicker { color: var(--copper); }
+  .limits ul { margin: 8px 0 0; }
+  .limits li::marker { color: var(--copper); }
+  .limits li { font-size: 14.5px; }
+  .limits b { font-weight: 600; }
+
+  ul { max-width: 68ch; padding-left: 22px; margin: 12px 0; }
+  li { margin-bottom: 8px; }
+  li::marker { color: var(--accent); }
+
+  a { color: var(--accent); text-decoration-thickness: 1px; text-underline-offset: 2px; }
+  a:focus-visible, .stat:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+  footer {
+    margin-top: 64px; padding-top: 20px; border-top: 1px solid var(--line);
+    font-size: 13.5px; color: var(--muted);
+    display: flex; flex-wrap: wrap; gap: 6px 24px;
+  }
+
+  @media (prefers-reduced-motion: no-preference) {
+    header, .stats, section { animation: rise 0.5s ease both; }
+    .stats { animation-delay: 0.08s; }
+  }
+  @keyframes rise { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: none; } }
+</style>
+</head>
+<body>
+
+<div class="wrap">
+  <header>
+    <p class="eyebrow">Ficha técnica · Julio 2026 · Francisco Parra</p>
+    <h1><span class="mono-name">swarm-abm</span> — simulación basada en agentes, en Rust</h1>
+    <p class="subtitle">Un motor genérico de ABM espacial — la familia de NetLogo y Mesa — con
+    reproducibilidad bit a bit como contrato y rendimiento que habilita experimentos
+    computacionales antes inviables.</p>
+    <div class="stats">
+      <div class="stat"><b>45–67×</b><span>más rápido que Mesa (Python) en el mismo modelo SIR</span></div>
+      <div class="stat"><b>3</b><span>paradigmas espaciales: grilla, red y espacio continuo</span></div>
+      <div class="stat"><b>38 M</b><span>agente-pasos por segundo (benchmark con criterion)</span></div>
+      <div class="stat"><b>0</b><span>líneas <code>unsafe</code>; publicado en crates.io</span></div>
+    </div>
+  </header>
+
+  <section>
+    <p class="kicker">El problema</p>
+    <h2>Las herramientas estándar del campo no escalan ni garantizan reproducibilidad</h2>
+    <p>Los modelos basados en agentes (ABM) son la herramienta natural para sistemas donde el
+    comportamiento colectivo emerge de reglas individuales: epidemias, segregación urbana,
+    flujos de detritos, dinámica depredador–presa. El campo trabaja sobre
+    <strong>NetLogo</strong> (JVM, lenguaje propio) y <strong>Mesa</strong> (Python): excelentes
+    para prototipar, pero lentos en dos órdenes de magnitud para calibración, análisis de
+    sensibilidad o ensambles grandes — y con garantías débiles de reproducibilidad exacta
+    (Mesa depende del RNG global de NumPy; muchos modelos publicados no fijan semilla).</p>
+    <p><code>swarm-abm</code> ataca ambos frentes: un núcleo en Rust sin dependencias de runtime
+    (compila a WebAssembly y corre en el navegador) donde <em>misma semilla → mismos bits</em>
+    es una invariante verificada por integración continua, no una aspiración.</p>
+  </section>
+
+  <section>
+    <p class="kicker">Arquitectura</p>
+    <h2>Un mismo par <code>Agent</code>/<code>Model</code> sobre tres espacios</h2>
+    <p>El usuario define dos traits (qué decide un agente, cómo se actualiza el mundo) y elige
+    el espacio y el esquema de activación — ordenada, aleatoria, simultánea en dos fases
+    (<code>decide</code>/<code>apply</code>, con inmutabilidad garantizada por el compilador,
+    no por disciplina) o por etapas. El resto — scheduling, vecindades, recolección de series,
+    barridos de parámetros en paralelo — lo pone el motor.</p>
+    <div class="spaces">
+      <div class="space">
+        <svg viewBox="0 0 200 84" role="img" aria-label="Grilla 2D">
+          <g class="svg-line" stroke-width="1">
+            <path d="M20 10 H180 M20 32 H180 M20 54 H180 M20 76 H180"/>
+            <path d="M20 10 V76 M52 10 V76 M84 10 V76 M116 10 V76 M148 10 V76 M180 10 V76"/>
+          </g>
+          <rect class="svg-accent" x="86" y="34" width="28" height="18"/>
+          <rect class="svg-muted" x="54" y="12" width="28" height="18" opacity="0.45"/>
+          <rect class="svg-muted" x="118" y="56" width="28" height="18" opacity="0.45"/>
+        </svg>
+        <h3>Grilla 2D</h3>
+        <p>Vecindades Moore y Von Neumann de radio arbitrario, torus opcional,
+        <code>diffuse</code> estilo NetLogo. Schelling, SIR espacial, Juego de la Vida.</p>
+      </div>
+      <div class="space">
+        <svg viewBox="0 0 200 84" role="img" aria-label="Red / grafo">
+          <g class="svg-line" stroke-width="1.2">
+            <path d="M40 60 L90 22 M90 22 L150 40 M90 22 L60 14 M150 40 L165 68 M40 60 L100 66 M100 66 L150 40"/>
+          </g>
+          <circle class="svg-muted" cx="60" cy="14" r="5" opacity="0.45"/>
+          <circle class="svg-accent" cx="90" cy="22" r="7"/>
+          <circle class="svg-muted" cx="40" cy="60" r="5" opacity="0.45"/>
+          <circle class="svg-muted" cx="150" cy="40" r="6" opacity="0.45"/>
+          <circle class="svg-muted" cx="100" cy="66" r="5" opacity="0.45"/>
+          <circle class="svg-muted" cx="165" cy="68" r="4" opacity="0.45"/>
+        </svg>
+        <h3>Red (grafo)</h3>
+        <p>Generadores deterministas Erdős–Rényi, Watts–Strogatz y Barabási–Albert;
+        aristas con peso, grafos dirigidos. Contagio sobre topologías reales.</p>
+      </div>
+      <div class="space">
+        <svg viewBox="0 0 200 84" role="img" aria-label="Espacio continuo">
+          <circle class="svg-accent-line" cx="100" cy="42" r="30" fill="none" stroke-dasharray="4 4" stroke-width="1.2"/>
+          <circle class="svg-accent" cx="100" cy="42" r="5"/>
+          <circle class="svg-muted" cx="118" cy="30" r="4" opacity="0.6"/>
+          <circle class="svg-muted" cx="84" cy="58" r="4" opacity="0.6"/>
+          <circle class="svg-muted" cx="122" cy="56" r="4" opacity="0.6"/>
+          <circle class="svg-muted" cx="40" cy="20" r="4" opacity="0.35"/>
+          <circle class="svg-muted" cx="166" cy="66" r="4" opacity="0.35"/>
+          <circle class="svg-muted" cx="30" cy="66" r="4" opacity="0.35"/>
+          <circle class="svg-muted" cx="160" cy="16" r="4" opacity="0.35"/>
+        </svg>
+        <h3>Espacio continuo</h3>
+        <p>Posiciones reales con vecindad por radio vía <em>spatial hashing</em>.
+        Flocking de Reynolds: orden de Vicsek 0.02 → 0.96.</p>
+      </div>
+    </div>
+  </section>
+
+  <section>
+    <p class="kicker">El diferenciador</p>
+    <h2>Determinismo como contrato, no como camino feliz</h2>
+    <div class="contract">
+      <p><strong>Misma semilla → mismos resultados, bit a bit</strong> — en secuencial y en
+      paralelo (cada agente deriva su RNG de <code>(semilla, paso, id)</code>, así que repartir
+      la fase <code>decide</code> entre 16 hilos produce exactamente los mismos bytes), y entre
+      plataformas (x86-64 y WebAssembly, verificado en CI con tests de valores dorados que
+      pinnean los bytes exactos de cada primitiva).</p>
+      <p>La política está escrita (<code>docs/REPRODUCIBILITY.md</code>): qué está garantizado,
+      qué no, y qué tipo de cambio exige qué tipo de versión. El motor ha pasado tres
+      auditorías internas de código (julio 2026) con hallazgos corregidos, cada uno con su
+      test de regresión.</p>
+    </div>
+  </section>
+
+  <section>
+    <p class="kicker">Experimentación</p>
+    <h2>Análisis de sensibilidad global integrado</h2>
+    <p>El módulo <code>experiment</code> trae diseño de experimentos determinista por
+    construcción: muestreo Sobol′ con estimadores de Saltelli (2010) y Jansen (1999) e
+    intervalos bootstrap, screening de Morris e hipercubo latino — validados contra la función
+    de Ishigami, cuyos índices tienen forma cerrada. Es la pieza que en Python obliga a
+    acoplar SALib y horas de cómputo: aquí el análisis de sensibilidad de un ABM completo es
+    un experimento de minutos, dentro del mismo binario.</p>
+  </section>
+
+  <section>
+    <p class="kicker">Stack y decisiones técnicas</p>
+    <h2>Rust puro, sin runtime — y todo lo demás se sigue de ahí</h2>
+    <p>NetLogo vive sobre la JVM y Mesa sobre CPython; ambos pagan el costo de un intérprete y
+    de un RNG global difícil de reproducir. Al compilar a código nativo — y al mismo tiempo a
+    WebAssembly desde el mismo fuente — el motor evita las dos cosas. Estas son las decisiones
+    que lo definen técnicamente:</p>
+    <div class="stack">
+      <div class="decision">
+        <span class="tag">rng · chacha8</span>
+        <h3>Determinismo por derivación, no por candado</h3>
+        <p>Cada agente deriva su stream de <code>(semilla, paso, id)</code> vía una cadena de
+        hashes (<code>child_rng</code>).</p>
+        <p class="why">La fase <code>decide</code> se reparte entre 16 hilos con rayon y da
+        bits idénticos al secuencial — y a wasm32. La inmutabilidad la prueba el compilador.</p>
+      </div>
+      <div class="decision">
+        <span class="tag">agent · arena generacional</span>
+        <h3>Nacimientos y muertes sin invalidar referencias</h3>
+        <p>Los agentes viven en una arena con <code>AgentId = {index, generation}</code> y
+        free-list de reúso de slots.</p>
+        <p class="why">Permite demografía en runtime (SIGRID) sin punteros colgantes ni
+        pérdida de determinismo — el nudo clásico de este tipo de motor en Rust.</p>
+      </div>
+      <div class="decision">
+        <span class="tag">model · trait Agent/Model</span>
+        <h3>Un patrón take-out para el doble préstamo</h3>
+        <p>Dos traits definen el modelo; el patrón <em>take-out</em> resuelve el acceso mutable
+        al mundo sin conflicto de <em>borrows</em>.</p>
+        <p class="why">Tres espacios (grilla, grafo, continuo) y cuatro activaciones conviven
+        bajo la misma abstracción, sin <code>unsafe</code> ni <em>trait objects</em>.</p>
+      </div>
+      <div class="decision">
+        <span class="tag">ci · golden + wasm + msrv</span>
+        <h3>La reproducibilidad es un gate, no una promesa</h3>
+        <p>Tests de valores dorados fijan los bytes exactos del motor y corren también en
+        wasm32 bajo wasmtime en cada push.</p>
+        <p class="why">"Misma semilla → mismos bits, en serie o paralelo, servidor o navegador"
+        lo verifica la máquina, más clippy, fmt y MSRV pineado.</p>
+      </div>
+    </div>
+    <div class="limits">
+      <p class="kicker">Fronteras de alcance (v0.4, honestas)</p>
+      <p style="font-size:14.5px; color:var(--muted); margin:0 0 6px; max-width:68ch;">No son
+      defectos de corrección — esos se cerraron en tres auditorías — sino lo que aún no está en
+      el alcance:</p>
+      <ul>
+        <li><b>Single-node</b>: rayon reparte entre cores, pero no hay distribución multi-máquina (MPI).</li>
+        <li><b>Bindings Python</b>: <code>run()</code> retiene el GIL (los reporters del colector no son <code>Send</code>); los <em>sweeps</em> sí lo liberan.</li>
+        <li><b>Salida de datos</b>: series a CSV; export a Parquet/Arrow todavía no.</li>
+        <li><b>Almacenamiento</b>: <em>array-of-structs</em>; la optimización SoA queda para cuando el profiling la justifique.</li>
+        <li><b>Visor WASM</b>: funcional, nivel demo — no un entorno de autoría como el de NetLogo.</li>
+      </ul>
+    </div>
+  </section>
+
+  <section>
+    <p class="kicker">Evidencia</p>
+    <h2>Validación y rendimiento</h2>
+    <div class="tablewrap">
+      <table>
+        <tr><th>Qué se verificó</th><th>Resultado</th><th>Protocolo</th></tr>
+        <tr>
+          <td>Paridad estadística con Mesa</td>
+          <td class="num">7/7 métricas, |z| ≤ 1.22</td>
+          <td>50 réplicas por motor, curvas de ensamble Δ &lt; 0.021</td>
+        </tr>
+        <tr>
+          <td>Velocidad vs Mesa (SIR)</td>
+          <td class="num">45–67×</td>
+          <td>Grillas 25² a 200², mediana, medición en proceso</td>
+        </tr>
+        <tr>
+          <td>Velocidad vs Agents.jl (Julia)</td>
+          <td class="num">2–5×</td>
+          <td>SIR y Schelling, benchmark cross-engine</td>
+        </tr>
+        <tr>
+          <td>Throughput del núcleo</td>
+          <td class="num">38 M agente-pasos/s</td>
+          <td>criterion; SIR 50×50 completo en 7 ms</td>
+        </tr>
+        <tr>
+          <td>Calidad del RNG entre agentes</td>
+          <td class="num">PractRand sin anomalías</td>
+          <td>Stream inter-agente hasta 1 GB</td>
+        </tr>
+        <tr>
+          <td>Identidad cross-platform</td>
+          <td class="num">bit-idéntico x86-64 / wasm32</td>
+          <td>Gate de CI en cada push (wasmtime)</td>
+        </tr>
+      </table>
+    </div>
+  </section>
+
+  <section>
+    <p class="kicker">Casos reales</p>
+    <h2>No es un motor de juguete: corre ciencia en producción</h2>
+    <div class="cases">
+      <div class="case">
+        <h3>Flujos de detritos — Atacama 2015</h3>
+        <p>Port fiel del modelo híbrido de aluviones (Copiapó, 31.8 M celdas): de
+        <span class="fig">130–240 s a 1.2–4 s</span> por corrida (~100×), ahora reproducible
+        (el original usaba el RNG global de NumPy sin semilla).</p>
+        <p>La velocidad habilitó lo que antes no se podía: calibración robusta multi-semilla
+        por evolución diferencial (<span class="fig">~400×</span> vs Python), un benchmark de
+        5 metaheurísticas con potencia estadística real (7 500 simulaciones, Friedman +
+        Wilcoxon-Holm), y un ciclo diagnóstico→física dirigida que subió el IoU de
+        <span class="fig">0.468 → 0.508</span> en Chañaral.</p>
+      </div>
+      <div class="case">
+        <h3>SIGRID — dinámica ganado–depredador, Isla Riesco</h3>
+        <p>Port del modelo Mesa con paridad verificada y <span class="fig">~116×</span> de
+        aceleración. El análisis de sensibilidad global de Sobol′ — computacionalmente
+        inviable sobre el original en Python — corrió nativo con el módulo
+        <code>experiment</code>.</p>
+        <p>Demuestra el flujo completo: prototipo en Mesa → port verificado → experimentos
+        HPC que responden preguntas del modelo, no del framework.</p>
+      </div>
+    </div>
+  </section>
+
+  <section>
+    <p class="kicker">Ecosistema</p>
+    <h2>Publicado y accesible desde tres mundos</h2>
+    <ul>
+      <li><strong>Rust</strong>: <code>cargo add swarm-abm</code> —
+      publicado en crates.io (v0.3.0; v0.4.0 en preparación tras la tercera auditoría),
+      documentación completa en docs.rs, MSRV fijado y verificado en CI.</li>
+      <li><strong>Python</strong>: bindings PyO3 (<code>import swarm_abm</code>) con los modelos
+      de referencia y barridos paralelos con el GIL liberado — paridad bit a bit con los
+      binarios nativos.</li>
+      <li><strong>Navegador</strong>: el motor completo compila a WebAssembly
+      (~68 KB); visor interactivo de Schelling, SIR y Sugarscape sobre un canvas, con los
+      mismos resultados que en escritorio.</li>
+    </ul>
+  </section>
+
+  <section>
+    <p class="kicker">Estado y proyección</p>
+    <h2>Hacia un software paper</h2>
+    <p>El motor está completo en su alcance v0.x: núcleo auditado tres veces, tres espacios,
+    cuatro esquemas de activación, checkpoint/restore bit-exacto, ensambles paralelos y
+    análisis de sensibilidad nativo. El manuscrito objetivo — <em>Environmental Modelling
+    &amp; Software</em> o <em>JASSS</em> — se apoya en cinco patas: el contrato de determinismo
+    verificado por CI, la paridad estadística con Mesa, los benchmarks cross-engine, y los dos
+    casos de geociencia aplicada donde la velocidad habilitó experimentos nuevos (calibración
+    robusta y GSA de Sobol′), no solo los mismos experimentos más rápido.</p>
+  </section>
+
+  <footer>
+    <span><span class="mono">github.com/franciscoparrao/swarm-abm</span></span>
+    <span><span class="mono">crates.io/crates/swarm-abm</span></span>
+    <span>Francisco Parra · julio 2026</span>
+  </footer>
+</div>
+
+</body>
+</html>

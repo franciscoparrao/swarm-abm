@@ -186,6 +186,75 @@ resultado que valida la premisa del motor: la reproducibilidad bit a bit es
 una propiedad de ingeniería, no algo de lo que dependa la validez del
 modelo científico construido encima.
 
+## Re-corrida 2026-07-10 — A/B controlado del fix de *common random numbers*
+
+La 3ª auditoría del motor (`../../docs/AUDIT.md`, "Auditoría — 3ª pasada
+(2026-07-10)") encontró dos defectos en el `experiment::sobol` con el que se
+computa este GSA: **A1/F3** — las evaluaciones no compartían *common random
+numbers* (cada punto del diseño de Saltelli corría con una semilla
+independiente), lo que para un ABM estocástico infla el `ST` de los
+parámetros inertes con ruido puro; y **A2** — el `.skip(1)` de la secuencia
+Sobol' rompía el balance diádico (Owen 2020). Ambos están corregidos en
+`swarm-abm` 0.4.0.
+
+Para aislar el efecto de estos fixes de otros cambios (en particular el fix
+del modelo `3276c6d`, residual de 2 perros, posterior a la re-validación de
+arriba), se corrió un **A/B controlado con el modelo fijo en HEAD**
+(`54982e2`): dos brazos idénticos salvo por revertir F3+A2 en `experiment.rs`.
+Ambos: `sobol-native --n 512 --days 30 --seed 1 --n-boot 500`, 4096
+evaluaciones, desde worktrees limpios.
+
+| ST (efecto total) | BUGGY-GSA (F3+A2 revertidos) | FIXED (0.4.0) | Δ (fix GSA) |
+|---|---:|---:|---:|
+| n_dogs | **1.021** [0.919, 1.111] | **0.902** [0.801, 0.992] | −0.119 |
+| chilla_density | 0.204 | 0.194 | −0.010 |
+| sheep_density | 0.199 | 0.163 | −0.036 |
+| fox_predation_effectiveness | 0.198 | 0.152 | −0.046 |
+| lamb_proportion | 0.195 | 0.177 | −0.018 |
+| hare_density | 0.183 | 0.183 | 0.000 |
+| **sum(ST)** | **2.00** | **1.77** | **−0.23** |
+| n_dogs S1 | 0.782 | 0.796 | +0.014 |
+| Y media | 38.46% | 38.23% | (modelo constante ✓) |
+
+**Lecturas:**
+
+1. **El A/B es limpio.** La media de `Y` (38.5% vs 38.2%) y la distribución
+   coinciden entre brazos: el modelo no cambió, solo el esquema de semillas
+   del análisis de sensibilidad.
+
+2. **Qué hace realmente el fix de CRN.** El brazo con bug estima
+   `ST[n_dogs] = 1.021`, es decir **por encima de 1** — imposible para un
+   índice de efecto total legítimo; es la firma de la contaminación por
+   ruido que F3 describe. El fix lo baja a `0.902` (físicamente sano, < 1),
+   des-infla los efectos secundarios en 0.01–0.05, y deja `S1[n_dogs]`
+   prácticamente intacto (0.782 → 0.796) — el efecto de primer orden es
+   robusto, como se espera (el ruido sin CRN se cuela por la vía de la
+   interacción/total, no del primer orden).
+
+3. **Corrección a la lectura preliminar.** La caída de `sum(ST)` frente a los
+   números viejos documentados arriba (≈2.96 → 1.77) **no** es
+   mayoritariamente el fix del GSA, como se hipotetizó al ver la primera
+   corrida. El fix de CRN aporta solo −0.23 (2.00 → 1.77); el grueso
+   (2.96 → 2.00) es el fix del modelo `3276c6d` más el cambio de arnés (el
+   módulo nativo estima S1/ST con `N·(D+2)=4096` evaluaciones, mientras la
+   tabla vieja de 2026-07-02 usó el híbrido SALib con `N·(2D+2)=7168` e
+   incluía términos de segundo orden). El A/B controlado fue justamente lo
+   que evitó atribuir al fix del GSA un efecto que es del modelo.
+
+4. **El hallazgo central es robusto en ambos brazos.** `n_dogs` domina con
+   `ST` 0.90–1.02 y una brecha de ~4.6–5× sobre el segundo lugar
+   (`chilla_density`), y es el único parámetro con efecto de primer orden
+   real (S1≈0.79; el resto con S1 indistinguible de cero). El fix del GSA
+   **mejora la calidad del estimador** (elimina el artefacto `ST > 1` sobre
+   el parámetro dominante y afina levemente el orden secundario) sin tocar
+   ni la señal de primer orden ni la conclusión de manejo: el número de
+   perros es la palanca.
+
+*Nota de alcance:* estas cifras son del modelo **committeado** en `54982e2`.
+El diff en progreso sobre `src/{lib.rs,main.rs}` (fuera de esta corrida) las
+volvería a mover; re-correr el A/B tras committear ese trabajo es directo con
+los mismos comandos.
+
 ---
 
 
