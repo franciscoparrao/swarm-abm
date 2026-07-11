@@ -70,11 +70,21 @@ vacías en vez de contagio in situ). Pasos fijos sin corte por convergencia.
 ## Lectura (dos modelos)
 
 A través de **dos modelos canónicos con patrones de acceso distintos**,
-swarm-abm es consistentemente el más rápido: **~2–5× sobre Agents.jl** (el
-competidor compilado de referencia, Julia) y **~45–184× sobre Mesa**, manteniendo
-además determinismo bit a bit y un target WASM que Agents.jl no ofrece. El
-control de cordura Agents.jl/Mesa (10–48×, su rango conocido) confirma que los
-espejos en Agents.jl son implementaciones idiomáticas y justas.
+swarm-abm supera con holgura a los motores de runtime interpretado o JIT:
+**~2–5× sobre Agents.jl** (el competidor compilado de referencia, Julia) y
+**~45–184× sobre Mesa**, manteniendo además determinismo bit a bit y un target
+WASM que Agents.jl no ofrece. El control de cordura Agents.jl/Mesa (10–48×, su
+rango conocido) confirma que los espejos en Agents.jl son implementaciones
+idiomáticas y justas.
+
+> **swarm-abm NO es el ABM más rápido en Rust.** Frente a **krABMaga** (otro
+> motor nativo en Rust) swarm-abm **pierde** en velocidad bruta: ~1.15–2.1× en
+> SIR, ~2.0–2.6× en Schelling. Eso es esperable y no toca la tesis del motor —
+> el wedge de swarm-abm es el **determinismo bit a bit por construcción**, que
+> krABMaga no reclama (vende memory-safety; su `parallel` es Experimental). El
+> benchmark completo, con su lectura honesta, está en **`KRABMAGA.md`**. Se
+> reporta explícitamente para no seleccionar solo los comparadores donde se
+> gana.
 
 ## Caveats (honestos)
 
