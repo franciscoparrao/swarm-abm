@@ -4,13 +4,15 @@ Formato basado en [Keep a Changelog](https://keepachangelog.com/).
 El proyecto sigue [SemVer](https://semver.org/). Mientras `0.x`, la API
 puede cambiar entre minors.
 
-## [Sin publicar] — candidata a 0.4.0
+## [0.4.0] — 2026-07-10
 
+Publicada en crates.io el 2026-07-10 (`swarm-abm` y `swarm-abm-derive`).
 Acumula dos tandas de correcciones de auditoría posteriores a la
 publicación de 0.3.0: la **auditoría de seguimiento** del 2026-07-05
 (F1–F6) y la **tercera pasada** del 2026-07-10 (5 altos, 9 medios y ~10
 bajos; ver `docs/AUDIT.md`). Ninguna de las dos está en la 0.3.0 de
-crates.io.
+crates.io — 0.4.0 es la primera versión publicada con los fixes de
+determinismo del GSA (CRN de Sobol/Morris) y del checkpoint.
 
 ### Rompe determinismo
 
