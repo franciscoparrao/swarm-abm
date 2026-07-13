@@ -1,0 +1,13 @@
+FROM ubuntu:24.04
+ENV DEBIAN_FRONTEND=noninteractive
+RUN apt-get update && apt-get install -y --no-install-recommends \
+      g++ make libpqxx-dev postgresql postgresql-client ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
+WORKDIR /app
+COPY . /app
+# Vendored pqxx headers may clash with system libpqxx-dev ABI; drop them and
+# use the system headers/lib consistently.
+RUN rm -rf /app/libs/include/pqxx
+# The Makefile hardcodes -I./libs/include; keep it (harmless now) and add system paths.
+RUN make CXXFLAGS="-std=c++17 -O3 -pthread -fpermissive -flto -w" 2>&1 | tail -25
+CMD ["bash", "/app/run_demo.sh"]

@@ -1,0 +1,21 @@
+[package]
+name = "scaling-bench"
+version = "0.0.0"
+edition = "2021"
+publish = false
+
+# Workspace propio: se construye aislado del workspace del repo, usando la
+# versión publicada de swarm-abm (lo que obtiene un usuario real).
+[workspace]
+
+[dependencies]
+swarm-abm = "0.4"
+
+[[bin]]
+name = "prey_predator"
+path = "src/main.rs"
+
+[profile.release]
+opt-level = 3
+lto = true
+codegen-units = 1

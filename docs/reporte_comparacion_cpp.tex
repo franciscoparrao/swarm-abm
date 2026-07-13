@@ -1,0 +1,189 @@
+\documentclass[11pt,a4paper]{article}
+\usepackage[utf8]{inputenc}
+\usepackage[T1]{fontenc}
+\usepackage[spanish,es-noquoting]{babel}
+\usepackage[margin=2.5cm]{geometry}
+\usepackage{booktabs}
+\usepackage{array}
+\usepackage{xcolor}
+\usepackage{colortbl}
+\usepackage{enumitem}
+\usepackage{fancyhdr}
+\usepackage{titlesec}
+\usepackage[hidelinks]{hyperref}
+\usepackage{tcolorbox}
+
+\definecolor{acc}{HTML}{0E6E65}
+\definecolor{cop}{HTML}{A85A32}
+\definecolor{ln}{HTML}{D5E2DF}
+\definecolor{ok}{HTML}{2E7D5B}
+\definecolor{no}{HTML}{B23A48}
+
+\titleformat{\section}{\normalfont\large\bfseries\color{acc}}{\thesection.}{0.5em}{}
+\titleformat{\subsection}{\normalfont\normalsize\bfseries}{\thesubsection}{0.5em}{}
+
+\pagestyle{fancy}\fancyhf{}
+\lhead{\small\color{acc}swarm-abm vs.\ sim2-agricultores}
+\rhead{\small\thepage}
+\renewcommand{\headrulewidth}{0.4pt}
+
+\newcommand{\si}{\textcolor{ok}{\textbf{sí}}}
+\newcommand{\nno}{\textcolor{no}{\textbf{no}}}
+\newcommand{\code}[1]{\texttt{\small #1}}
+
+\begin{document}
+
+\begin{center}
+{\LARGE\bfseries\color{acc} Idoneidad de un motor C++ existente para\\[2pt]
+escalar el modelo de depredación de ovejas}\\[10pt]
+{\large Análisis técnico comparativo}\\[14pt]
+\begin{tabular}{rl}
+\textbf{Preparado para:} & Prof.\ Mauricio Marín \\
+ & Manuel Manríquez (autor de \code{sim2-agricultores}) \\[3pt]
+\textbf{Preparado por:} & Francisco Parra \\[3pt]
+\textbf{Fecha:} & 13 de julio de 2026 \\[3pt]
+\textbf{Objeto:} & Contrastar el motor C++ propuesto contra \code{swarm-abm} \\
+ & como vehículo para escalar el modelo SIGRID (depredación de ganado). \\
+\end{tabular}
+\end{center}
+
+\vspace{4pt}
+\hrule
+\vspace{10pt}
+
+\begin{tcolorbox}[colback=acc!6,colframe=acc,boxrule=0.6pt,arc=2pt]
+\textbf{Resumen ejecutivo.} Para \emph{escalar} el problema de las ovejas
+depredadas se requiere calibrar el modelo y hacerle análisis de sensibilidad de
+forma auditable, y ambas cosas descansan en la \textbf{reproducibilidad}
+(mismo input $\rightarrow$ mismo output). Una prueba en vivo muestra que el
+código C++ propuesto, \emph{tal como está hoy}, \textbf{no reproduce sus propias
+corridas}: dos ejecuciones con configuración idéntica dan resultados distintos.
+El mismo experimento sobre \code{swarm-abm} es reproducible bit a bit. Esto no
+significa que el C++ sea ``inutilizable'': la falla es arreglable en principio.
+El punto es de \textbf{esfuerzo y riesgo}: usarlo para esta tarea implica
+reconstruir en C++ el motor espacial, el diseño de experimentos y la garantía de
+reproducibilidad que \code{swarm-abm} ya provee, tiene auditado y publicado.
+\end{tcolorbox}
+
+\section{Qué es el código C++ propuesto}
+
+\code{sim2-agricultores} (\textasciitilde5.160 líneas de C++) es un simulador de
+\textbf{mercados agrícolas} —agricultores, feriantes, consumidores, mercado
+mayorista, terrenos y productos, con eventos de sequía, helada y ola de calor— y
+es una pieza sólida en su dominio. Su arquitectura es de \textbf{simulación por
+eventos discretos} (DES): una \emph{future event list}, manejadores de eventos y
+colas de mensajes.
+
+El modelo de ovejas (SIGRID) es de naturaleza distinta: \textbf{espacial y por
+pasos} (grilla, dinámica depredador--presa evaluada por \emph{tick}). De ahí dos
+observaciones de fondo, previas a la reproducibilidad:
+
+\begin{itemize}[leftmargin=1.4em,itemsep=2pt]
+  \item El código C++ \textbf{no contiene primitivas espaciales} (grilla,
+  vecindades). Llevar SIGRID ahí obliga a construir esa infraestructura desde
+  cero.
+  \item El \textbf{paradigma no calza}: un DES orientado a transacciones de
+  mercado no expresa naturalmente la dinámica espacial sincrónica de depredación.
+\end{itemize}
+
+\section{Prueba en vivo: el C++ propuesto no es reproducible}
+
+Se compiló y ejecutó el simulador C++ \textbf{dos veces con configuración
+idéntica} (\code{sim\_config.json} sin cambios), en un contenedor autocontenido
+(PostgreSQL~16 + g++~13 + libpqxx). Se comparó el vector completo de resultados
+agregados mediante hash MD5:
+
+\begin{tcolorbox}[colback=black!3,colframe=ln,boxrule=0.5pt,arc=2pt,fontupper=\ttfamily\small]
+Corrida 1 — exit 0 — 1260 filas — hash \textcolor{cop}{089cdd94c7695f77\dots} \\
+Corrida 2 — exit 0 — 1260 filas — hash \textcolor{cop}{9f344b0f1e960c3d\dots}\ \ $\leftarrow$ distinto \\[4pt]
+65 de 1260 filas (misma clave) tienen VALOR distinto entre las dos corridas. \\
+Ej.: ``COMPRA DE FERIANTE A AGRICULTOR'', t=16, prod=18 $\rightarrow$ 36.360 vs 28.620 ($-21\%$) \\[4pt]
+\textbf{VEREDICTO: NO REPRODUCIBLE.}
+\end{tcolorbox}
+
+\noindent\textbf{Causa.} Cada fuente de aleatoriedad del código se siembra con
+\code{std::mt19937(std::random\_device\{\}())} —desde la entropía del sistema
+operativo, sin semilla fija en ninguna parte del API (aparece en al menos 8
+archivos)—. Con el código actual no hay forma de forzar dos corridas idénticas.
+
+\medskip
+\noindent\textit{Matiz honesto.} Para estadísticas agregadas de mercado por Monte
+Carlo (correr $N$ veces y promediar), esta decisión es legítima. Pero es una
+limitación para calibración y análisis de sensibilidad —justamente lo que
+``escalar el problema'' requiere— y para depurar (un resultado anómalo no se
+puede reproducir).
+
+\section{Prueba en vivo: swarm-abm sí es reproducible}
+
+El mismo experimento sobre el modelo de ovejas real en \code{swarm-abm} (dos
+corridas con la misma semilla):
+
+\begin{tcolorbox}[colback=black!3,colframe=ln,boxrule=0.5pt,arc=2pt,fontupper=\ttfamily\small]
+Corrida 1 — hash de la salida: \textcolor{acc}{faa5b35e733da2cb\dots} \\
+Corrida 2 — hash de la salida: \textcolor{acc}{faa5b35e733da2cb\dots}\ \ $\leftarrow$ idéntico \\[4pt]
+\textbf{VEREDICTO: REPRODUCIBLE BIT A BIT.}
+\end{tcolorbox}
+
+\noindent No es accidente de una corrida: el determinismo de \code{swarm-abm}
+está garantizado por construcción (RNG ChaCha8 sembrable, semilla por-agente,
+ejecución paralela bit-idéntica a la secuencial, identidad entre x86-64 y
+WebAssembly) y \textbf{verificado en integración continua} en cada cambio.
+
+\section{Matriz de idoneidad para escalar el modelo de ovejas}
+
+\renewcommand{\arraystretch}{1.3}
+\begin{center}
+\begin{tabular}{>{\raggedright\arraybackslash}p{7.4cm} c c}
+\toprule
+\textbf{Lo que ``escalar'' exige} & \textbf{sim2-agricultores} & \textbf{swarm-abm} \\
+\midrule
+Reproducibilidad bit a bit & \nno\ (demostrado) & \si\ (demostrado + CI) \\
+Ya implementa el modelo de ovejas & \nno\ (es mercados) & \si\ (SIGRID vs Mesa) \\
+Primitivas espaciales (grilla, vecindades) & \nno\ (DES no espacial) & \si\ (tres espacios) \\
+Análisis de sensibilidad global nativo & \nno\ (a construir) & \si\ (Sobol/Morris/LHS) \\
+Calibración & \nno\ (manual) & \si\ (DE, $\sim$400$\times$ vs Python) \\
+Determinismo bajo paralelismo & \nno & \si\ (paralelo $=$ secuencial) \\
+Dependencias para correr & PostgreSQL & ninguna ($+$ WASM) \\
+Estado del código & tesis, \code{-fpermissive} & crates.io, 3 auditorías, CI \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\section{Sobre el rendimiento (honesto)}
+
+\textbf{No es posible comparar la velocidad de ambos directamente}: son modelos y
+paradigmas distintos, y cronometrar uno contra otro no mediría nada. Lo que sí
+está medido con rigor es que \code{swarm-abm} \emph{no sacrifica rendimiento por
+ser reproducible}: es 45--184$\times$ más rápido que Mesa (Python) y está a solo
+$\sim$1,5--2,6$\times$ del motor de ABM nativo más rápido que existe (krABMaga,
+Rust). Es decir, el argumento ``hay que ir a C++ por velocidad'' no se sostiene:
+un motor en Rust ya está en la banda de rendimiento nativo \emph{y además} es
+reproducible y trae análisis de sensibilidad integrado.
+
+\section{Conclusión}
+
+No se afirma que el código C++ sea inutilizable —sería impreciso—. Hay dos cosas
+distintas: (i)~la no-reproducibilidad es un defecto \textbf{arreglable en
+principio}, cableando una semilla, aunque hacerlo bien (y mantener determinismo
+si se paraleliza) es trabajo de ingeniería no trivial; y (ii)~el obstáculo mayor
+es que el código \textbf{no es el modelo ni el paradigma}: usarlo para las ovejas
+implica reimplementar el modelo espacial depredador--presa en un framework de
+mercados que no lo soporta.
+
+\begin{tcolorbox}[colback=cop!7,colframe=cop,boxrule=0.6pt,arc=2pt]
+El encuadre correcto no es ``se puede o no se puede'', sino \textbf{esfuerzo y
+riesgo frente a reutilizar lo ya hecho}. Usar este C++ para escalar el problema
+significa reconstruir —con menos garantías y semanas de trabajo— el motor
+espacial, el diseño de experimentos y la reproducibilidad que \code{swarm-abm} ya
+provee, tiene auditado y publicado. El modelo de ovejas ya corre ahí, validado
+contra Mesa y reproducible bit a bit, y fue con su análisis de sensibilidad
+nativo que se identificó al número de perros como la principal palanca de manejo.
+\end{tcolorbox}
+
+\vspace{6pt}
+\noindent\footnotesize\textcolor{gray}{La comparación es reproducible: el arnés
+de la prueba (Dockerfile + script) está disponible y repite ambos lados en un
+comando. swarm-abm: \url{https://github.com/franciscoparrao/swarm-abm} /
+\url{https://crates.io/crates/swarm-abm}.}
+
+\end{document}
