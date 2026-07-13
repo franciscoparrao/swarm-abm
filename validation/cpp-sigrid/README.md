@@ -5,7 +5,42 @@ Implementación en C++ del modelo de ovejas SIGRID, para la vía de escala
 de referencia**: el C++ se valida contra él por paridad distribucional. Ver el
 plan completo en `../../docs/PLAN_PORT_CPP_SIGRID.md`.
 
-## Estado: Hito 1 completo — subconjunto de *screening* (oveja + zorro)
+## Estado: Hitos 1–2 completos — oveja + zorro + perros guardianes
+
+### Hito 2 — perros guardianes (la intervención)
+
+`sheep_fox.cpp` incorpora los perros (`--dogs N`): patrulla circular del rebaño,
+persecución a 3000 m/h, y **disuasión multi-objetivo** dentro de 200 m que deja a
+los zorros con miedo, sin apetito y con memoria de la zona peligrosa (decae a
+168 h). Con perros presentes los zorros pasan a la curva de actividad "con perro"
+y evitan las áreas de riesgo acumulado.
+
+Validación contra el oráculo, barrido `dogs ∈ {0..4} × fox_eff`, **15
+semillas/punto**:
+
+| dogs | fox_eff | C++ | swarm-abm | \|Δ\| |
+|---:|---:|---:|---:|---:|
+| 0 | 0.14 | 51.5% | 51.3% | 0.1 |
+| 1 | 0.14 | 10.0% | 13.6% | 3.6 |
+| 2 | 0.14 |  5.8% |  3.8% | 2.0 |
+| 3 | 0.14 |  4.1% |  5.0% | 0.9 |
+| 4 | 0.14 |  4.8% |  2.7% | 2.1 |
+
+**Pearson r = 0.9949 · RMSE = 2.00 pp · sesgo +0.17 pp.** Los perros reducen la
+pérdida de ~50% a dígitos únicos en ambos motores.
+
+**Lección metodológica**: la disuasión es un sistema de **umbral de alta
+varianza** (un zorro es disuadido o no, y eso cae en cascada). Con 3 semillas el
+1-perro parecía divergir (C++ 3,4% vs oráculo 17,1%); con 10–15 semillas
+converge (Δ<1–3 pp). El subsistema de perros **necesita más réplicas** que el
+suave oveja+zorro del Hito 1 para una paridad estable.
+
+**Nota (blanco móvil)**: el caso de **2 perros** es justo el "residual" que se
+está tuneando en el modelo swarm-abm (WIP no committeado). Este port replica el
+HEAD committeado; la validación fina de 2 perros conviene rehacerla cuando ese
+tuning se commitee.
+
+## Hito 1 — subconjunto de *screening* (oveja + zorro)
 
 `sheep_fox.cpp` porta el subconjunto de screening del SIGRID committeado
 (`models/sigrid/src/lib.rs @ HEAD`): ovejas (adultas/corderos, con miedo, huida,
@@ -67,8 +102,6 @@ El oráculo se construye desde un árbol limpio en HEAD:
 
 ## Próximos hitos
 
-2. **+ Perros guardianes** (la intervención): disuasión, memoria de peligro,
-   acecho/intercepción. Re-validar contra swarm-abm con `--dogs`.
 3. **+ Liebres y chillas** (presa alternativa, segundo depredador). Modelo
    completo de screening.
 4. **OpenMP** (un nodo): mismo resultado validado, con speedup. Aquí el oráculo

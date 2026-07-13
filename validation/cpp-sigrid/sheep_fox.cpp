@@ -32,15 +32,28 @@ static const double LAMB_SPEED = 35.0, LAMB_FLEE_SPEED = 60.0, LAMB_PERCEPTION_R
 static const double LAMB_MATURATION_DAYS = 120.0, LAMB_VULN = 0.85;
 static const double FOX_SPEED_WALK = 500.0, FOX_DETECTION_RADIUS = 300.0, FOX_TERRITORY_RADIUS = 6135.0;
 static const double HUNGER_THRESHOLD = 0.3, BASE_RISK_AVERSION = 0.6, FOX_ATTACK_RADIUS = 50.0;
-static const double FOX_ACT_PEAK = 0.0, FOX_ACT_AMP = 0.90, FOX_ACT_SIGMA = 4.5, FOX_ACT_BASE = 0.05; // sin perro
+static const double FOX_ACT_PEAK_ND = 0.0, FOX_ACT_AMP_ND = 0.90, FOX_ACT_SIGMA_ND = 4.5, FOX_ACT_BASE_ND = 0.05; // sin perro
+static const double FOX_ACT_PEAK_WD = 1.5, FOX_ACT_AMP_WD = 0.45, FOX_ACT_SIGMA_WD = 3.0, FOX_ACT_BASE_WD = 0.30; // con perro
 static const double FOX_P_MIN = 0.02, FOX_P_MAX = 0.35;
+// Perros y disuasión
+static const double DOG_PROXIMITY_VIGILANCE = 100.0, DOG_SPEED_PATROL = 300.0, DOG_SPEED_CHASE = 3000.0;
+static const double DOG_DETECTION_RADIUS = 1200.0, DOG_CHASE_RADIUS = 200.0, DOG_PATROL_RADIUS = 250.0;
+static const double DOG_DETER_RADIUS = 50.0, DOG_PROTECTION_STRENGTH = 0.20, DOG_AVOID_RADIUS = 500.0;
+static const double DANGER_RADIUS = 400.0;
+static const uint64_t DANGER_TTL = 168;
 
-enum Species { SHEEP = 0, FOX = 1 };
+enum Species { SHEEP = 0, FOX = 1, DOG = 2 };
+
+struct DangerZone { double x, y; uint64_t step; };
 
 struct Animal {
     int species; double x, y; bool alive; double energy, age_days, fear;
     bool is_lamb; double vulnerability; int mother; // índice o -1
     double hunger, risk_aversion, predation_eff;
+    // zorro: memoria de zonas peligrosas + presa en acecho
+    std::vector<DangerZone> danger_zones; int stalk_target = -1;
+    // perro: patrullaje circular
+    double patrol_angle = 0.0, patrol_cx = 0.0, patrol_cy = 0.0;
 };
 
 struct Snap { double x, y; int species; bool alive, is_lamb; double vulnerability, energy; int mother; };
@@ -63,7 +76,7 @@ struct Rng { // envoltorio sobre mt19937_64 con helpers estilo swarm-abm
 };
 
 struct Params { double width = 2000, height = 2000, sheep_density = 0.96, fox_density = 8.4,
-                fox_predation_effectiveness = 0.14, lamb_proportion = 0.2; };
+                fox_predation_effectiveness = 0.14, lamb_proportion = 0.2; int n_dogs = 0; };
 
 // ---- espacio: índice de celdas sobre la instantánea ----
 struct Grid {
@@ -114,17 +127,30 @@ static void build_rasters(double W, double H, Rng& rng, Raster& quality, Raster&
 struct Model {
     std::vector<Animal> agents; std::vector<Snap> snap; Grid grid;
     Raster veg_quality, veg_cover; Params params;
+    std::vector<std::pair<double,double>> dog_positions;
     int current_hour = 0; uint64_t step_count = 0;
     long sheep_killed = 0, predation_attempts = 0; int n_sheep_initial = 0;
 
     void before_step() {
         current_hour = (int)(step_count % 24); step_count++;
         snap.resize(agents.size());
+        dog_positions.clear();
         for (size_t i = 0; i < agents.size(); ++i) {
             const Animal& a = agents[i];
             snap[i] = {a.x, a.y, a.species, a.alive, a.is_lamb, a.vulnerability, a.energy, a.mother};
+            if (a.alive && a.species == DOG) dog_positions.push_back({a.x, a.y});
         }
         grid.build(snap, params.width, params.height);
+    }
+
+    // nearest_dog_dist: menor distancia a un perro dentro de `max`, o -1 si ninguno.
+    double nearest_dog_dist(double px, double py, double max) const {
+        double best = -1.0;
+        for (auto& d : dog_positions) {
+            double dd = std::sqrt((px - d.first) * (px - d.first) + (py - d.second) * (py - d.second));
+            if (dd <= max && (best < 0 || dd < best)) best = dd;
+        }
+        return best;
     }
 };
 
@@ -152,21 +178,25 @@ static void step_sheep(Model& m, int i, Rng& rng) {
         else { double a = rng.range(0.0, TAU); dx = std::cos(a); dy = std::sin(a); }
         s.x = clampd(s.x + dx * sp, 0, m.params.width); s.y = clampd(s.y + dy * sp, 0, m.params.height);
     } else {
-        double p_move = 0.76 + 0.04; // sin perro
+        bool dog_near = m.nearest_dog_dist(s.x, s.y, DOG_PROXIMITY_VIGILANCE) >= 0;
+        double p_move = dog_near ? (0.60 + 0.02) : (0.76 + 0.04);
         if (rng.unit() < p_move) {
             // graze_and_move
             double vfx, vfy; food_direction(m.veg_quality, s.x, s.y, vfx, vfy);
             double vrx = 0, vry = 0, worst = m.veg_cover.get(s.x, s.y);
             for (int k = 0; k < 8; ++k) { double a = TAU * k / 8.0, ox = std::cos(a), oy = std::sin(a);
                 double cov = m.veg_cover.get(s.x + ox * 50.0, s.y + oy * 50.0); if (cov > worst) { worst = cov; vrx = -ox; vry = -oy; } }
-            double cx = 0, cy = 0, n = 0;
+            double cx = 0, cy = 0, n = 0, dog_best = 1e300, dgx = 0, dgy = 0;
             m.grid.within(m.snap, s.x, s.y, std::max(SHEEP_PERCEPTION_RADIUS, 500.0), [&](const Snap& sn, double d) {
                 if (!sn.alive) return;
-                if (sn.species == SHEEP && d <= SHEEP_PERCEPTION_RADIUS) { cx += sn.x; cy += sn.y; n += 1; } });
+                if (sn.species == SHEEP && d <= SHEEP_PERCEPTION_RADIUS) { cx += sn.x; cy += sn.y; n += 1; }
+                if (sn.species == DOG && d < dog_best) { dog_best = d; dgx = sn.x; dgy = sn.y; } });
             double vcx = 0, vcy = 0;
             if (n > 0) { vcx = cx / n - s.x; vcy = cy / n - s.y; norm(vcx, vcy); }
-            double dx = vfx * 0.3 + vrx * 0.2 + vcx * 0.2 + rng.normal(0.1);
-            double dy = vfy * 0.3 + vry * 0.2 + vcy * 0.2 + rng.normal(0.1);
+            double vdx = 0, vdy = 0;
+            if (dog_best < 500.0) { vdx = dgx - s.x; vdy = dgy - s.y; norm(vdx, vdy); }
+            double dx = vfx * 0.3 + vrx * 0.2 + vcx * 0.2 + vdx * 0.3 + rng.normal(0.1);
+            double dy = vfy * 0.3 + vry * 0.2 + vcy * 0.2 + vdy * 0.3 + rng.normal(0.1);
             norm(dx, dy);
             double sp = s.is_lamb ? LAMB_SPEED : SHEEP_SPEED;
             s.x = clampd(s.x + dx * sp, 0, m.params.width); s.y = clampd(s.y + dy * sp, 0, m.params.height);
@@ -182,6 +212,8 @@ static double predation_probability(Model& m, int fox_i, int prey_i) {
     Animal& fox = m.agents[fox_i]; Animal& prey = m.agents[prey_i];
     double p_base = fox.predation_eff * prey.vulnerability;
     double m_cover = 0.05 * m.veg_cover.get(fox.x, fox.y);
+    double dnd = m.nearest_dog_dist(fox.x, fox.y, 500.0);
+    double m_dog = (dnd >= 0) ? -DOG_PROTECTION_STRENGTH * (1.0 - dnd / 500.0) : 0.0;
     double nearby = 0;
     m.grid.within(m.snap, prey.x, prey.y, 50.0, [&](const Snap& sn, double) { if (sn.alive && sn.species == SHEEP) nearby += 1; });
     double m_group = -0.03 * std::min(nearby / 10.0, 1.0);
@@ -190,7 +222,7 @@ static double predation_probability(Model& m, int fox_i, int prey_i) {
     if (prey.is_lamb && prey.mother >= 0) { Animal& mo = m.agents[prey.mother];
         if (mo.alive) { double d = std::sqrt((prey.x - mo.x) * (prey.x - mo.x) + (prey.y - mo.y) * (prey.y - mo.y));
             if (d < 20.0) m_mother = -0.12 * (1.0 - d / 20.0); } }
-    return clampd(p_base + m_cover + m_group + m_condition + m_mother, FOX_P_MIN, FOX_P_MAX);
+    return clampd(p_base + m_cover + m_dog + m_group + m_condition + m_mother, FOX_P_MIN, FOX_P_MAX);
 }
 
 static void attempt_predation(Model& m, int fox_i, int prey_i, Rng& rng) {
@@ -206,15 +238,51 @@ static void attempt_predation(Model& m, int fox_i, int prey_i, Rng& rng) {
 static void step_fox(Model& m, int i, Rng& rng) {
     Animal& f = m.agents[i];
     f.hunger = std::min(f.hunger + 0.01, 1.0);
-    // fox_active (sin perro)
-    double h = (double)m.current_hour; double raw = std::fabs(h - FOX_ACT_PEAK); double d = std::min(raw, 24.0 - raw);
-    double level = std::min(FOX_ACT_BASE + FOX_ACT_AMP * std::exp(-(d * d) / (2.0 * FOX_ACT_SIGMA * FOX_ACT_SIGMA)), 1.0);
+    // olvido de zonas peligrosas vencidas (memoria de 168 h)
+    uint64_t now = m.step_count;
+    { auto& dz = f.danger_zones; dz.erase(std::remove_if(dz.begin(), dz.end(),
+        [&](const DangerZone& z) { return now - z.step >= DANGER_TTL; }), dz.end()); }
+    // fox_active: curva gaussiana, desplazada/aplanada si percibe un perro en su territorio
+    bool perceives_dog = m.nearest_dog_dist(f.x, f.y, FOX_TERRITORY_RADIUS) >= 0;
+    double peak = perceives_dog ? FOX_ACT_PEAK_WD : FOX_ACT_PEAK_ND;
+    double amp = perceives_dog ? FOX_ACT_AMP_WD : FOX_ACT_AMP_ND;
+    double sigma = perceives_dog ? FOX_ACT_SIGMA_WD : FOX_ACT_SIGMA_ND;
+    double base = perceives_dog ? FOX_ACT_BASE_WD : FOX_ACT_BASE_ND;
+    double h = (double)m.current_hour; double raw = std::fabs(h - peak); double dd0 = std::min(raw, 24.0 - raw);
+    double level = std::min(base + amp * std::exp(-(dd0 * dd0) / (2.0 * sigma * sigma)), 1.0);
     if (rng.unit() >= level) return; // descanso
     if (f.hunger < HUNGER_THRESHOLD) { double a = rng.range(0.0, TAU), dd = rng.range(50.0, 200.0);
         f.x = clampd(f.x + std::cos(a) * dd, 0, m.params.width); f.y = clampd(f.y + std::sin(a) * dd, 0, m.params.height); return; }
-    // hunt (sin perros, sin liebres): sin evitación de riesgo ni acecho.
-    // Detección de presas: el snapshot está alineado 1:1 con `agents` (índice j),
-    // así que recorremos las celdas vecinas y usamos j como id de agente.
+    // --- hunt ---
+    // (a) evitación de área: riesgo sumado por perros dentro de DOG_AVOID_RADIUS
+    // + memoria de zonas peligrosas. Si supera la aversión, aborta y se aleja.
+    {
+        double risk = 0, wx = 0, wy = 0, wsum = 0;
+        for (auto& dgp : m.dog_positions) {
+            double ddx = f.x - dgp.first, ddy = f.y - dgp.second, dist = std::sqrt(ddx * ddx + ddy * ddy);
+            if (dist < DOG_AVOID_RADIUS) { double r = 1.0 - dist / DOG_AVOID_RADIUS; risk += r; wx += dgp.first * r; wy += dgp.second * r; wsum += r; }
+        }
+        for (auto& z : f.danger_zones) {
+            double ddx = f.x - z.x, ddy = f.y - z.y, dist = std::sqrt(ddx * ddx + ddy * ddy);
+            if (dist < DANGER_RADIUS) { double age = (double)(now - z.step) / (double)DANGER_TTL;
+                double r = (1.0 - age) * (1.0 - dist / DANGER_RADIUS); risk += r; wx += z.x * r; wy += z.y * r; wsum += r; }
+        }
+        if (risk > f.risk_aversion) { // mult=1 (sin chillas)
+            f.danger_zones.push_back({f.x, f.y, now}); if (f.danger_zones.size() > 64) f.danger_zones.erase(f.danger_zones.begin());
+            double fx = wsum > 0 ? wx / wsum : f.x, fy = wsum > 0 ? wy / wsum : f.y;
+            double ax = f.x - fx, ay = f.y - fy; norm(ax, ay);
+            f.x = clampd(f.x + ax * FOX_SPEED_WALK, 0, m.params.width); f.y = clampd(f.y + ay * FOX_SPEED_WALK, 0, m.params.height);
+            f.stalk_target = -1; return;
+        }
+    }
+    // (b) ataque comprometido: si venía acechando y la presa está a tiro, ataca
+    { int tid = f.stalk_target; f.stalk_target = -1;
+        if (tid >= 0 && m.agents[tid].alive) {
+            double ddx = f.x - m.agents[tid].x, ddy = f.y - m.agents[tid].y;
+            if (std::sqrt(ddx * ddx + ddy * ddy) < FOX_ATTACK_RADIUS) { attempt_predation(m, i, tid, rng); return; }
+        }
+    }
+    // (c) detección de presas: snapshot alineado 1:1 con `agents` (índice j)
     std::vector<int> prey;
     int gx = (int)(f.x / m.grid.csz); if (gx < 0) gx = 0; if (gx > m.grid.nx - 1) gx = m.grid.nx - 1;
     int gy = (int)(f.y / m.grid.csz); if (gy < 0) gy = 0; if (gy > m.grid.ny - 1) gy = m.grid.ny - 1;
@@ -240,7 +308,69 @@ static void step_fox(Model& m, int i, Rng& rng) {
     double step = std::min(FOX_SPEED_WALK, tolen); double ux = to_x, uy = to_y; norm(ux, uy);
     f.x = clampd(f.x + ux * step, 0, m.params.width); f.y = clampd(f.y + uy * step, 0, m.params.height);
     double adx = f.x - tx, ady = f.y - ty;
-    if (std::sqrt(adx * adx + ady * ady) < FOX_ATTACK_RADIUS) attempt_predation(m, i, best, rng); // sin perro: mata de inmediato
+    if (std::sqrt(adx * adx + ady * ady) < FOX_ATTACK_RADIUS) {
+        // Si hay un perro en rango de detección, NO mata este tick: queda en
+        // acecho expuesto (el perro tendrá un turno para interceptarlo). Sin
+        // perro cerca, mata de inmediato.
+        bool dog_near = m.nearest_dog_dist(f.x, f.y, DOG_DETECTION_RADIUS) >= 0;
+        if (dog_near) f.stalk_target = best; else attempt_predation(m, i, best, rng);
+    }
+}
+
+// ---- perro guardián (determinista) ----
+static void step_dog(Model& m, int i) {
+    Animal& dog = m.agents[i];
+    // detectar zorro más cercano en DOG_DETECTION_RADIUS (snapshot)
+    double best = 1e300, bx = 0, by = 0; int best_id = -1;
+    {
+        int gx = (int)(dog.x / m.grid.csz); if (gx < 0) gx = 0; if (gx > m.grid.nx - 1) gx = m.grid.nx - 1;
+        int gy = (int)(dog.y / m.grid.csz); if (gy < 0) gy = 0; if (gy > m.grid.ny - 1) gy = m.grid.ny - 1;
+        int cr = (int)(DOG_DETECTION_RADIUS / m.grid.csz) + 1;
+        for (int ddy = -cr; ddy <= cr; ++ddy) for (int ddx = -cr; ddx <= cr; ++ddx) {
+            int ax = gx + ddx, ay = gy + ddy; if (ax < 0 || ay < 0 || ax >= m.grid.nx || ay >= m.grid.ny) continue;
+            for (int j = m.grid.head[(size_t)ay * m.grid.nx + ax]; j != -1; j = m.grid.nxt[j]) {
+                const Snap& sn = m.snap[j]; if (!sn.alive || sn.species != FOX) continue;
+                double dx = sn.x - dog.x, dy = sn.y - dog.y, dist = std::sqrt(dx * dx + dy * dy);
+                if (dist <= DOG_DETECTION_RADIUS && dist < best) { best = dist; bx = sn.x; by = sn.y; best_id = j; }
+            }
+        }
+    }
+    if (best_id >= 0) {
+        double to_x = bx - dog.x, to_y = by - dog.y, tolen = std::sqrt(to_x * to_x + to_y * to_y);
+        double step = std::min(DOG_SPEED_CHASE, tolen), ux = to_x, uy = to_y; norm(ux, uy);
+        dog.x = clampd(dog.x + ux * step, 0, m.params.width); dog.y = clampd(dog.y + uy * step, 0, m.params.height);
+        double cdx = dog.x - bx, cdy = dog.y - by;
+        if (best < DOG_CHASE_RADIUS && std::sqrt(cdx * cdx + cdy * cdy) < DOG_DETER_RADIUS) {
+            // disuasión multi-objetivo: el objetivo + otros zorros dentro de
+            // DOG_CHASE_RADIUS de la posición nueva del perro (snapshot)
+            std::vector<std::pair<int, std::pair<double, double>>> deterred;
+            deterred.push_back({best_id, {bx, by}});
+            int gx = (int)(dog.x / m.grid.csz); if (gx < 0) gx = 0; if (gx > m.grid.nx - 1) gx = m.grid.nx - 1;
+            int gy = (int)(dog.y / m.grid.csz); if (gy < 0) gy = 0; if (gy > m.grid.ny - 1) gy = m.grid.ny - 1;
+            int cr = (int)(DOG_CHASE_RADIUS / m.grid.csz) + 1;
+            for (int ddy = -cr; ddy <= cr; ++ddy) for (int ddx = -cr; ddx <= cr; ++ddx) {
+                int ax = gx + ddx, ay = gy + ddy; if (ax < 0 || ay < 0 || ax >= m.grid.nx || ay >= m.grid.ny) continue;
+                for (int j = m.grid.head[(size_t)ay * m.grid.nx + ax]; j != -1; j = m.grid.nxt[j]) {
+                    const Snap& sn = m.snap[j]; if (!sn.alive || sn.species != FOX || j == best_id) continue;
+                    double dx = sn.x - dog.x, dy = sn.y - dog.y; if (std::sqrt(dx * dx + dy * dy) <= DOG_CHASE_RADIUS) deterred.push_back({j, {sn.x, sn.y}});
+                }
+            }
+            uint64_t now = m.step_count;
+            for (auto& pr : deterred) { Animal& fox = m.agents[pr.first]; if (!fox.alive) continue;
+                fox.fear = 1.0; fox.hunger = 0.0; fox.stalk_target = -1;
+                fox.danger_zones.push_back({pr.second.first, pr.second.second, now});
+                if (fox.danger_zones.size() > 64) fox.danger_zones.erase(fox.danger_zones.begin()); }
+        }
+        return;
+    }
+    // patrullaje circular alrededor del centroide del rebaño (posiciones vivas)
+    double cx = 0, cy = 0, n = 0;
+    for (auto& a : m.agents) if (a.alive && a.species == SHEEP) { cx += a.x; cy += a.y; n += 1; }
+    double flx = n > 0 ? cx / n : dog.patrol_cx, fly = n > 0 ? cy / n : dog.patrol_cy;
+    dog.patrol_angle += 0.1;
+    double tx = flx + std::cos(dog.patrol_angle) * DOG_PATROL_RADIUS, ty = fly + std::sin(dog.patrol_angle) * DOG_PATROL_RADIUS;
+    double dx = tx - dog.x, dy = ty - dog.y; norm(dx, dy);
+    dog.x = clampd(dog.x + dx * DOG_SPEED_PATROL, 0, m.params.width); dog.y = clampd(dog.y + dy * DOG_SPEED_PATROL, 0, m.params.height);
 }
 
 static double run_loss_rate(const Params& params, uint64_t seed, uint64_t n_days, long& killed, long& attempts) {
@@ -278,6 +408,15 @@ static double run_loss_rate(const Params& params, uint64_t seed, uint64_t n_days
         a.predation_eff = params.fox_predation_effectiveness;
         m.agents.push_back(a);
     }
+    // Perros guardianes alrededor del rebaño (sin chillas/liebres en screening,
+    // así que el consumo de RNG de build coincide con el orden del oráculo).
+    for (int k = 0; k < params.n_dogs; ++k) {
+        double a0 = rng_build.range(0.0, TAU);
+        Animal a{}; a.species = DOG; a.alive = true; a.energy = 100; a.mother = -1;
+        a.x = clampd(fcx + std::cos(a0) * 300.0, 0, params.width); a.y = clampd(fcy + std::sin(a0) * 300.0, 0, params.height);
+        a.patrol_cx = fcx; a.patrol_cy = fcy;
+        m.agents.push_back(a);
+    }
 
     // stepping: rng fresco sembrado con la misma semilla (como Simulation::new)
     Rng rng(seed);
@@ -287,7 +426,10 @@ static double run_loss_rate(const Params& params, uint64_t seed, uint64_t n_days
         // activación aleatoria: barajar con el RNG maestro (Fisher-Yates, como shuffle de swarm-abm)
         for (size_t k = order.size(); k > 1; --k) { size_t j = (size_t)(rng.unit() * k); std::swap(order[k - 1], order[j]); }
         for (int idx : order) { if (!m.agents[idx].alive) continue;
-            if (m.agents[idx].species == SHEEP) step_sheep(m, idx, rng); else step_fox(m, idx, rng); }
+            int sp = m.agents[idx].species;
+            if (sp == SHEEP) step_sheep(m, idx, rng);
+            else if (sp == FOX) step_fox(m, idx, rng);
+            else step_dog(m, idx); }
         // término anticipado si no quedan ovejas
         bool any_sheep = false; for (auto& a : m.agents) if (a.alive && a.species == SHEEP) { any_sheep = true; break; }
         if (!any_sheep) break;
@@ -304,6 +446,7 @@ int main(int argc, char** argv) {
     p.fox_density = darg("--fox-density", p.fox_density);
     p.fox_predation_effectiveness = darg("--fox-eff", p.fox_predation_effectiveness);
     p.lamb_proportion = darg("--lamb-prop", p.lamb_proportion);
+    p.n_dogs = (int)darg("--dogs", p.n_dogs);
 
     double sum = 0; int cnt = 0;
     for (uint64_t s = 0; s < n_seeds; ++s) {
