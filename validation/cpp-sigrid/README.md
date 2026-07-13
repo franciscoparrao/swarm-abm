@@ -5,7 +5,37 @@ Implementación en C++ del modelo de ovejas SIGRID, para la vía de escala
 de referencia**: el C++ se valida contra él por paridad distribucional. Ver el
 plan completo en `../../docs/PLAN_PORT_CPP_SIGRID.md`.
 
-## Estado: Hitos 1–2 completos — oveja + zorro + perros guardianes
+## Estado: Hitos 1–3 completos — modelo de *screening* completo
+
+Las cuatro especies (oveja, zorro, perro guardián, liebre, chilla) están
+portadas y validadas contra el oráculo swarm-abm. `sheep_fox.cpp` reproduce el
+comportamiento del modelo de screening en todo el espacio de parámetros.
+
+### Hito 3 — liebres (presa alternativa) + chillas (segundo depredador)
+
+Liebre: percepción 80 m, huida a 800 m/h, maduración a 60 días (vulnerabilidad
+0,9 juvenil → 0,6 adulta). Chilla: mismo comportamiento que el zorro pero con
+territorio menor (4295 m) y 1,8× más aversa al perro. El zorro/chilla ahora
+detecta liebres como presa y aplica **prey switching** (con ≥2 liebres cerca,
+baja el atractivo de las ovejas).
+
+Validación vs oráculo, 8 semillas/config:
+
+| config | C++ | swarm-abm | \|Δ\| |
+|---|---:|---:|---:|
+| baseline | 51.2% | 50.6% | 0.6 |
+| hare 3/ha | 13.5% | 14.2% | 0.7 |
+| hare 8/ha | 6.6% | 6.6% | 0.0 |
+| chilla 4/km² | 71.5% | 71.7% | 0.2 |
+| chilla 8/km² | 90.3% | 91.0% | 0.8 |
+| hare 3 + chilla 4 | 22.1% | 22.2% | 0.1 |
+| dogs 2 + hare 3 | 2.6% | 0.6% | 2.0 |
+
+**Pearson r = 0.9997 · RMSE = 0.90 pp · sesgo +0.13 pp.** Las liebres reducen la
+pérdida (presa alternativa); las chillas la aumentan (segundo depredador) —
+ambos efectos reproducidos.
+
+## Hito 2 — perros guardianes (la intervención)
 
 ### Hito 2 — perros guardianes (la intervención)
 
@@ -102,9 +132,8 @@ El oráculo se construye desde un árbol limpio en HEAD:
 
 ## Próximos hitos
 
-3. **+ Liebres y chillas** (presa alternativa, segundo depredador). Modelo
-   completo de screening.
 4. **OpenMP** (un nodo): mismo resultado validado, con speedup. Aquí el oráculo
-   se vuelve indispensable — caza bugs de concurrencia.
+   se vuelve indispensable — caza bugs de concurrencia. El determinismo bajo
+   paralelismo (RNG por-agente, reducción estable) es el problema difícil.
 5. **(Según decisión de alcance)** subsistemas del Mesa completo (infraestructura,
    estacionalidad, rasters GIS) — ver §7 del plan. Se agregan primero al oráculo.
