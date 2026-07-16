@@ -35,6 +35,22 @@ resultado **independiente del orden de ejecución**.
   el barrido (densidades, perros, liebres, chillas). El oráculo confirmó que la
   paralelización no rompe el comportamiento.
 
+### Hito 4b — detección de zorros en paralelo
+
+La detección de presas del zorro es una query espacial **read-only sobre el
+snapshot**, así que se precomputa en una fase paralela (`fox_detect`) antes de la
+fase secuencial de selección/ataque/mutación. Es **bit-idéntico** a Hito 4 (mismo
+hash) — solo cambia el orden de cómputo, no la semántica, así que la paridad con
+el oráculo (0,9976) se mantiene automáticamente.
+
+**Ganancia modesta y por qué** (hallazgo honesto): en un caso fox-heavy (8×8 km,
+~538 zorros, ~6144 ovejas), a 16 hilos el speedup sube de **2,71× a 3,08×**
+(~13%). Poco, porque **las ovejas dominan el conteo de agentes y ya estaban
+paralelas** en Hito 4; los zorros nunca fueron el cuello principal. El límite real
+no era la serialidad de los depredadores sino el ancho de banda de memoria (abajo)
+y la fase secuencial de mutación. Para subir sustancialmente habría que atacar el
+layout de datos (SoA, `Snap` más chico) antes que paralelizar más agentes.
+
 **Límites honestos del speedup** (hallazgos, no fallas — exactamente lo que el
 prof. Marín anticipó):
 1. **Memory-bandwidth**: a densidad alta en área fija, las consultas de vecindad
@@ -194,9 +210,9 @@ El oráculo se construye desde un árbol limpio en HEAD:
 
 ## Próximos hitos
 
-4b. **Dos fases para los zorros** (decide paralelo / apply secuencial): sube el
-   speedup más allá de ~3× cuando los depredadores escalan con el área.
-5. **BSPonMPI** (multi-nodo): descomposición de dominio + halo + broadcast de
+5. **Optimización memory-bound** (el techo real): layout SoA, `Snap` más compacto,
+   reducir el tráfico de las queries — antes de paralelizar más.
+6. **BSPonMPI** (multi-nodo): descomposición de dominio + halo + broadcast de
    perros; superpasos = ticks (el modelo ya es conservador BSP, ver §9 del plan).
-6. **(Según decisión de alcance)** subsistemas del Mesa completo (infraestructura,
+7. **(Según decisión de alcance)** subsistemas del Mesa completo (infraestructura,
    estacionalidad, rasters GIS) — ver §7 del plan. Se agregan primero al oráculo.

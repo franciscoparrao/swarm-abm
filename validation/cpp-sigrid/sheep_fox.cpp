@@ -267,7 +267,28 @@ static void attempt_predation(Model& m, int fox_i, int prey_i, PRng& rng) {
 }
 
 // ---- zorro ----
-static void step_fox(Model& m, int i, PRng& rng) {
+// Detección de presas del zorro (query espacial, READ-ONLY sobre el snapshot) —
+// se puede precomputar en paralelo (Hito 4b) sin cambiar la semántica: el centro
+// es la posición de inicio de tick (los zorros no se mueven en la fase A), y la
+// selección/ataque (que leen estado vivo) siguen secuenciales.
+static void fox_detect(const Model& m, double fx, double fy, std::vector<int>& prey, int& hares_nearby) {
+    prey.clear(); hares_nearby = 0;
+    int gx = (int)(fx / m.grid.csz); if (gx < 0) gx = 0; if (gx > m.grid.nx - 1) gx = m.grid.nx - 1;
+    int gy = (int)(fy / m.grid.csz); if (gy < 0) gy = 0; if (gy > m.grid.ny - 1) gy = m.grid.ny - 1;
+    int cr = (int)(FOX_DETECTION_RADIUS / m.grid.csz) + 1;
+    for (int dy = -cr; dy <= cr; ++dy) for (int dx = -cr; dx <= cr; ++dx) {
+        int ax = gx + dx, ay = gy + dy; if (ax < 0 || ay < 0 || ax >= m.grid.nx || ay >= m.grid.ny) continue;
+        for (int j = m.grid.head[(size_t)ay * m.grid.nx + ax]; j != -1; j = m.grid.nxt[j]) {
+            const Snap& sn = m.snap[j];
+            double ddx = sn.x - fx, ddy = sn.y - fy; if (std::sqrt(ddx * ddx + ddy * ddy) > FOX_DETECTION_RADIUS) continue;
+            if (!sn.alive) continue;
+            if (sn.species == SHEEP) prey.push_back(j);
+            else if (sn.species == HARE) { hares_nearby++; prey.push_back(j); }
+        }
+    }
+}
+
+static void step_fox(Model& m, int i, PRng& rng, const std::vector<int>& prey, int hares_nearby) {
     Animal& f = m.agents[i];
     f.hunger = std::min(f.hunger + 0.01, 1.0);
     // olvido de zonas peligrosas vencidas (memoria de 168 h)
@@ -315,21 +336,9 @@ static void step_fox(Model& m, int i, PRng& rng) {
             if (std::sqrt(ddx * ddx + ddy * ddy) < FOX_ATTACK_RADIUS) { attempt_predation(m, i, tid, rng); return; }
         }
     }
-    // (c) detección de presas (oveja/liebre): snapshot alineado 1:1 con `agents`
-    std::vector<int> prey; int hares_nearby = 0;
-    int gx = (int)(f.x / m.grid.csz); if (gx < 0) gx = 0; if (gx > m.grid.nx - 1) gx = m.grid.nx - 1;
-    int gy = (int)(f.y / m.grid.csz); if (gy < 0) gy = 0; if (gy > m.grid.ny - 1) gy = m.grid.ny - 1;
-    int cr = (int)(FOX_DETECTION_RADIUS / m.grid.csz) + 1;
-    for (int dy = -cr; dy <= cr; ++dy) for (int dx = -cr; dx <= cr; ++dx) {
-        int ax = gx + dx, ay = gy + dy; if (ax < 0 || ay < 0 || ax >= m.grid.nx || ay >= m.grid.ny) continue;
-        for (int j = m.grid.head[(size_t)ay * m.grid.nx + ax]; j != -1; j = m.grid.nxt[j]) {
-            const Snap& sn = m.snap[j];
-            double ddx = sn.x - f.x, ddy = sn.y - f.y; if (std::sqrt(ddx * ddx + ddy * ddy) > FOX_DETECTION_RADIUS) continue;
-            if (!sn.alive) continue;
-            if (sn.species == SHEEP) prey.push_back(j);
-            else if (sn.species == HARE) { hares_nearby++; prey.push_back(j); }
-        }
-    }
+    // (c) detección de presas: precomputada en paralelo (fox_detect), pasada como
+    // argumento. Es la parte cara del zorro; el resto (selección/ataque/mutación)
+    // sigue secuencial leyendo estado vivo.
     if (prey.empty()) { double a = rng.range(0.0, TAU);
         f.x = clampd(f.x + std::cos(a) * FOX_SPEED_WALK, 0, m.params.width); f.y = clampd(f.y + std::sin(a) * FOX_SPEED_WALK, 0, m.params.height); return; }
     // seleccionar por score (vuln; -0.3 oveja si hay prey switching; +0.2 cordero)
@@ -498,11 +507,15 @@ static double run_loss_rate(const Params& params, uint64_t seed, uint64_t n_days
     // Fase A = ovejas/liebres (independientes: leen snapshot+raster, escriben a
     // si mismas -> paralelizables). Fase B = zorros/perros (mutan estado
     // compartido: matanzas, contadores, zonas de peligro -> secuencial).
-    std::vector<int> phaseA, phaseB;
+    std::vector<int> phaseA, phaseB, foxidx;
     for (size_t k = 0; k < m.agents.size(); ++k) {
         int sp = m.agents[k].species;
         if (sp == SHEEP || sp == HARE) phaseA.push_back((int)k); else phaseB.push_back((int)k);
+        if (sp == FOX) foxidx.push_back((int)k);
     }
+    // Buffers reusados para la detección de zorros precomputada (Hito 4b).
+    std::vector<std::vector<int>> fdprey(m.agents.size());
+    std::vector<int> fdhares(m.agents.size(), 0);
     for (uint64_t step = 0; step < n_days * 24; ++step) {
         m.before_step();
         // Fase A (paralela): RNG por-agente (seed,step,id) -> independiente del orden de hilos.
@@ -512,13 +525,21 @@ static double run_loss_rate(const Params& params, uint64_t seed, uint64_t n_days
             PRng r(agent_seed(seed, step, (uint64_t)idx));
             if (m.agents[idx].species == SHEEP) step_sheep(m, idx, r); else step_hare(m, idx, r);
         }
-        // Fase B (secuencial): orden barajado por tick (determinista) para emular
-        // la activacion aleatoria; zorros y perros mutan estado compartido.
+        // Fase B1 (paralela): detección de presas de cada zorro (read-only sobre el
+        // snapshot; los zorros están en su posición de inicio de tick).
+        #pragma omp parallel for schedule(dynamic, 16)
+        for (size_t k = 0; k < foxidx.size(); ++k) {
+            int idx = foxidx[k];
+            if (!m.agents[idx].alive) { fdprey[idx].clear(); continue; }
+            fox_detect(m, m.agents[idx].x, m.agents[idx].y, fdprey[idx], fdhares[idx]);
+        }
+        // Fase B2 (secuencial): orden barajado por tick (determinista); zorros y
+        // perros mutan estado compartido (selección/ataque/disuasión).
         { PRng shuf(agent_seed(seed, step, 0xFFFFFFFFFFFFFFFFULL));
           for (size_t k = phaseB.size(); k > 1; --k) { size_t j = (size_t)(shuf.unit() * k); std::swap(phaseB[k - 1], phaseB[j]); } }
         for (int idx : phaseB) { if (!m.agents[idx].alive) continue;
             PRng r(agent_seed(seed, step, (uint64_t)idx));
-            if (m.agents[idx].species == FOX) step_fox(m, idx, r); else step_dog(m, idx); }
+            if (m.agents[idx].species == FOX) step_fox(m, idx, r, fdprey[idx], fdhares[idx]); else step_dog(m, idx); }
         // término anticipado si no quedan ovejas
         bool any_sheep = false; for (auto& a : m.agents) if (a.alive && a.species == SHEEP) { any_sheep = true; break; }
         if (!any_sheep) break;
