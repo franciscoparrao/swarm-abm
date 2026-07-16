@@ -5,11 +5,51 @@ Implementación en C++ del modelo de ovejas SIGRID, para la vía de escala
 de referencia**: el C++ se valida contra él por paridad distribucional. Ver el
 plan completo en `../../docs/PLAN_PORT_CPP_SIGRID.md`.
 
-## Estado: Hitos 1–3 completos — modelo de *screening* completo
+## Estado: Hitos 1–4 completos — modelo de *screening* + OpenMP determinista
 
 Las cuatro especies (oveja, zorro, perro guardián, liebre, chilla) están
-portadas y validadas contra el oráculo swarm-abm. `sheep_fox.cpp` reproduce el
+portadas y validadas contra el oráculo swarm-abm, y la versión paralela (OpenMP)
+es **determinista** y sigue validando. `sheep_fox.cpp` reproduce el
 comportamiento del modelo de screening en todo el espacio de parámetros.
+
+### Hito 4 — OpenMP determinista (un nodo)
+
+Paralelización en dos fases: **fase A (paralela)** = ovejas y liebres, que son
+independientes (leen la instantánea congelada + rasters y se escriben a sí
+mismas); **fase B (secuencial)** = zorros y perros, que mutan estado compartido
+(matanzas, contadores, zonas de peligro). Cada agente usa un **RNG por-agente**
+sembrado por `(semilla, paso, id)` (la idea de `child_rng`), lo que hace el
+resultado **independiente del orden de ejecución**.
+
+- **Determinismo**: 1, 4 y 16 hilos dan el **mismo hash bit a bit** (serial ==
+  paralelo, sin importar el número de hilos). Es el problema difícil del ABM
+  paralelo, resuelto.
+- **Speedup** (8×8 km, densidad default, pocos zorros, compute-bound):
+
+  | hilos | 1 | 2 | 4 | 8 | 16 |
+  |---|---|---|---|---|---|
+  | speedup | 1,00× | 1,34× | 1,88× | 2,50× | 3,07× |
+
+- **Correctitud preservada**: la reestructuración (RNG por-agente + fase split)
+  **sigue validando** contra el oráculo — Pearson **0,9976**, RMSE 2,1 pp sobre
+  el barrido (densidades, perros, liebres, chillas). El oráculo confirmó que la
+  paralelización no rompe el comportamiento.
+
+**Límites honestos del speedup** (hallazgos, no fallas — exactamente lo que el
+prof. Marín anticipó):
+1. **Memory-bandwidth**: a densidad alta en área fija, las consultas de vecindad
+   recorren miles de vecinos y saturan el ancho de banda → agregar hilos no ayuda
+   (mismo techo memory-bound que swarm-abm, ~1,6×). Por eso el speedup se mide
+   escalando el **área** a densidad constante (queries chicas, compute-bound).
+2. **Fase secuencial de depredadores**: los zorros escalan con el área y están en
+   la fase B secuencial → cuello de Amdahl. Para ir más allá de ~3× hay que dar a
+   los zorros tratamiento de dos fases (decide paralelo / apply secuencial con
+   resolución de conflictos de matanza) — Hito 4b.
+
+Compilar: `g++ -std=c++17 -O3 -march=native -fopenmp sheep_fox.cpp -o
+sheep_fox_omp`. Sin `-fopenmp` compila la versión serial idéntica.
+
+## Hito 3 — liebres (presa alternativa) + chillas (segundo depredador)
 
 ### Hito 3 — liebres (presa alternativa) + chillas (segundo depredador)
 
@@ -132,8 +172,9 @@ El oráculo se construye desde un árbol limpio en HEAD:
 
 ## Próximos hitos
 
-4. **OpenMP** (un nodo): mismo resultado validado, con speedup. Aquí el oráculo
-   se vuelve indispensable — caza bugs de concurrencia. El determinismo bajo
-   paralelismo (RNG por-agente, reducción estable) es el problema difícil.
-5. **(Según decisión de alcance)** subsistemas del Mesa completo (infraestructura,
+4b. **Dos fases para los zorros** (decide paralelo / apply secuencial): sube el
+   speedup más allá de ~3× cuando los depredadores escalan con el área.
+5. **BSPonMPI** (multi-nodo): descomposición de dominio + halo + broadcast de
+   perros; superpasos = ticks (el modelo ya es conservador BSP, ver §9 del plan).
+6. **(Según decisión de alcance)** subsistemas del Mesa completo (infraestructura,
    estacionalidad, rasters GIS) — ver §7 del plan. Se agregan primero al oráculo.

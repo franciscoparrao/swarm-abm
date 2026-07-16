@@ -22,6 +22,9 @@
 #include <vector>
 #include <random>
 #include <algorithm>
+#ifdef _OPENMP
+#include <omp.h>
+#endif
 
 // ---- constantes (del SIGRID committeado) ----
 static const double CELL_SIZE = 30.0;   // resolución del raster
@@ -72,13 +75,36 @@ struct Raster {
     }
 };
 
-struct Rng { // envoltorio sobre mt19937_64 con helpers estilo swarm-abm
+struct Rng { // envoltorio sobre mt19937_64 con helpers estilo swarm-abm (solo build)
     std::mt19937_64 g;
     explicit Rng(uint64_t s) : g(s) {}
     double unit() { return std::uniform_real_distribution<double>(0.0, 1.0)(g); }        // [0,1)
     double range(double a, double b) { return std::uniform_real_distribution<double>(a, b)(g); }
     double normal(double std) { double u1 = range(1e-12, 1.0), u2 = unit(); return std::sqrt(-2.0 * std::log(u1)) * std::cos(TAU * u2) * std; }
 };
+
+// RNG por-agente (splitmix64): barato de sembrar por (semilla, tick, id), lo que
+// hace el resultado INDEPENDIENTE del orden de ejecución -> determinista bajo
+// paralelismo (la idea de `child_rng` de swarm-abm). Mismos helpers.
+struct PRng {
+    uint64_t s;
+    explicit PRng(uint64_t seed) : s(seed) {}
+    uint64_t next() {
+        uint64_t z = (s += 0x9E3779B97F4A7C15ULL);
+        z = (z ^ (z >> 30)) * 0xBF58476D1CE4E5B9ULL;
+        z = (z ^ (z >> 27)) * 0x94D049BB133111EBULL;
+        return z ^ (z >> 31);
+    }
+    double unit() { return (double)(next() >> 11) * (1.0 / 9007199254740992.0); } // [0,1)
+    double range(double a, double b) { return a + unit() * (b - a); }
+    double normal(double std) { double u1 = range(1e-12, 1.0), u2 = unit(); return std::sqrt(-2.0 * std::log(u1)) * std::cos(TAU * u2) * std; }
+};
+static inline uint64_t agent_seed(uint64_t base, uint64_t tick, uint64_t id) {
+    uint64_t z = base ^ (tick * 0x9E3779B97F4A7C15ULL) ^ (id * 0xD1B54A32D192ED03ULL);
+    z = (z ^ (z >> 30)) * 0xBF58476D1CE4E5B9ULL;
+    z = (z ^ (z >> 27)) * 0x94D049BB133111EBULL;
+    return z ^ (z >> 31);
+}
 
 struct Params { double width = 2000, height = 2000, sheep_density = 0.96, fox_density = 8.4,
                 fox_predation_effectiveness = 0.14, lamb_proportion = 0.2,
@@ -169,7 +195,7 @@ static void food_direction(const Raster& q, double px, double py, double& dx, do
 static void norm(double& x, double& y) { double l = std::sqrt(x * x + y * y); if (l > 1e-12) { x /= l; y /= l; } else { x = 0; y = 0; } }
 
 // ---- oveja ----
-static void step_sheep(Model& m, int i, Rng& rng) {
+static void step_sheep(Model& m, int i, PRng& rng) {
     Animal& s = m.agents[i];
     double decay = s.is_lamb ? LAMB_FEAR_DECAY : 0.1;
     s.fear = std::max(s.fear - decay, 0.0); s.age_days += 1.0 / 24.0;
@@ -231,7 +257,7 @@ static double predation_probability(Model& m, int fox_i, int prey_i) {
     return clampd(p_base + m_cover + m_dog + m_group + m_condition + m_mother, FOX_P_MIN, FOX_P_MAX);
 }
 
-static void attempt_predation(Model& m, int fox_i, int prey_i, Rng& rng) {
+static void attempt_predation(Model& m, int fox_i, int prey_i, PRng& rng) {
     double p = predation_probability(m, fox_i, prey_i);
     m.predation_attempts++;
     bool success = rng.unit() < p;
@@ -241,7 +267,7 @@ static void attempt_predation(Model& m, int fox_i, int prey_i, Rng& rng) {
 }
 
 // ---- zorro ----
-static void step_fox(Model& m, int i, Rng& rng) {
+static void step_fox(Model& m, int i, PRng& rng) {
     Animal& f = m.agents[i];
     f.hunger = std::min(f.hunger + 0.01, 1.0);
     // olvido de zonas peligrosas vencidas (memoria de 168 h)
@@ -330,7 +356,7 @@ static void step_fox(Model& m, int i, Rng& rng) {
 }
 
 // ---- liebre (presa alternativa) ----
-static void step_hare(Model& m, int i, Rng& rng) {
+static void step_hare(Model& m, int i, PRng& rng) {
     Animal& h = m.agents[i];
     h.age_days += 1.0 / 24.0;
     if (!h.mature && h.age_days * 24.0 >= HARE_MATURITY_AGE_H) { h.mature = true; h.vulnerability = HARE_VULN_MATURE; }
@@ -469,19 +495,30 @@ static double run_loss_rate(const Params& params, uint64_t seed, uint64_t n_days
         m.agents.push_back(a);
     }
 
-    // stepping: rng fresco sembrado con la misma semilla (como Simulation::new)
-    Rng rng(seed);
-    std::vector<int> order(m.agents.size()); for (size_t k = 0; k < order.size(); ++k) order[k] = (int)k;
+    // Fase A = ovejas/liebres (independientes: leen snapshot+raster, escriben a
+    // si mismas -> paralelizables). Fase B = zorros/perros (mutan estado
+    // compartido: matanzas, contadores, zonas de peligro -> secuencial).
+    std::vector<int> phaseA, phaseB;
+    for (size_t k = 0; k < m.agents.size(); ++k) {
+        int sp = m.agents[k].species;
+        if (sp == SHEEP || sp == HARE) phaseA.push_back((int)k); else phaseB.push_back((int)k);
+    }
     for (uint64_t step = 0; step < n_days * 24; ++step) {
         m.before_step();
-        // activación aleatoria: barajar con el RNG maestro (Fisher-Yates, como shuffle de swarm-abm)
-        for (size_t k = order.size(); k > 1; --k) { size_t j = (size_t)(rng.unit() * k); std::swap(order[k - 1], order[j]); }
-        for (int idx : order) { if (!m.agents[idx].alive) continue;
-            int sp = m.agents[idx].species;
-            if (sp == SHEEP) step_sheep(m, idx, rng);
-            else if (sp == FOX) step_fox(m, idx, rng);
-            else if (sp == HARE) step_hare(m, idx, rng);
-            else step_dog(m, idx); }
+        // Fase A (paralela): RNG por-agente (seed,step,id) -> independiente del orden de hilos.
+        #pragma omp parallel for schedule(static)
+        for (size_t a = 0; a < phaseA.size(); ++a) {
+            int idx = phaseA[a]; if (!m.agents[idx].alive) continue;
+            PRng r(agent_seed(seed, step, (uint64_t)idx));
+            if (m.agents[idx].species == SHEEP) step_sheep(m, idx, r); else step_hare(m, idx, r);
+        }
+        // Fase B (secuencial): orden barajado por tick (determinista) para emular
+        // la activacion aleatoria; zorros y perros mutan estado compartido.
+        { PRng shuf(agent_seed(seed, step, 0xFFFFFFFFFFFFFFFFULL));
+          for (size_t k = phaseB.size(); k > 1; --k) { size_t j = (size_t)(shuf.unit() * k); std::swap(phaseB[k - 1], phaseB[j]); } }
+        for (int idx : phaseB) { if (!m.agents[idx].alive) continue;
+            PRng r(agent_seed(seed, step, (uint64_t)idx));
+            if (m.agents[idx].species == FOX) step_fox(m, idx, r); else step_dog(m, idx); }
         // término anticipado si no quedan ovejas
         bool any_sheep = false; for (auto& a : m.agents) if (a.alive && a.species == SHEEP) { any_sheep = true; break; }
         if (!any_sheep) break;
@@ -501,6 +538,8 @@ int main(int argc, char** argv) {
     p.chilla_density = darg("--chilla-density", p.chilla_density);
     p.hare_density = darg("--hare-density", p.hare_density);
     p.n_dogs = (int)darg("--dogs", p.n_dogs);
+    p.width = darg("--width", p.width);   // escalar el AREA a densidad constante
+    p.height = darg("--height", p.height); // -> muchos agentes, pocos vecinos/query
 
     double sum = 0; int cnt = 0;
     for (uint64_t s = 0; s < n_seeds; ++s) {
