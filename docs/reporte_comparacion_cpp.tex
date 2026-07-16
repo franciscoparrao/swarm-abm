@@ -160,6 +160,49 @@ Rust). Es decir, el argumento ``hay que ir a C++ por velocidad'' no se sostiene:
 un motor en Rust ya está en la banda de rendimiento nativo \emph{y además} es
 reproducible y trae análisis de sensibilidad integrado.
 
+\section{Avance del trabajo: port C++ del modelo, validado contra swarm-abm}
+
+Adoptado el esquema de dos motores —\code{swarm-abm} como referencia reproducible
+y oráculo de validación, C++ como motor de producción/escala— el trabajo ya
+arrancó y muestra resultados concretos.
+
+\subsection*{Benchmark de escala (¿hace falta distribución?)}
+Un kernel depredador--presa espacial \emph{idéntico} en C++ (escrito a mano, con
+índice de celdas) y en \code{swarm-abm} (su motor), escalando agentes en un solo
+nodo. Ambos escalan \textbf{linealmente} (mismo orden algorítmico); el C++ a mano
+es \textbf{$\sim$1,9$\times$ más rápido} —un factor constante, no creciente—. A
+40.000 agentes ambos corren un paso en milisegundos: la escala que se discute
+cabe holgadamente en \textbf{un solo nodo}. El motor en Rust está en la banda de
+rendimiento nativo, y a cambio del $\sim$2$\times$ entrega reproducibilidad y
+análisis de sensibilidad integrado.
+
+\subsection*{Port del modelo de ovejas, verificado por el oráculo}
+Se implementó en C++ el modelo de ovejas (subconjunto de \emph{screening}: oveja,
+zorro, perro guardián, liebre, chilla), \textbf{reproducible} (sembrado, a
+diferencia de \code{sim2-agricultores}), y validado \textbf{distribucionalmente
+contra \code{swarm-abm}} —la misma metodología que la paridad vs Mesa—:
+
+\begin{center}
+\renewcommand{\arraystretch}{1.2}
+\begin{tabular}{c l c}
+\toprule
+\textbf{Etapa} & \textbf{Especies} & \textbf{Paridad (Pearson $r$)} \\
+\midrule
+1 & oveja + zorro & 0,9986 \\
+2 & + perro guardián & 0,9949 \\
+3 & + liebre + chilla & \textbf{0,9997} \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+El oráculo cumplió su función de verificación: (i)~\textbf{cazó un bug} —el CLI de
+\code{swarm-abm} documentaba un parámetro (\code{-{}-fox-density}) que no
+aplicaba—; y (ii)~mostró que la disuasión de perros es un \textbf{sistema de alta
+varianza} que exige más réplicas para una comparación estable. El próximo paso es
+paralelizar el C++ con \textbf{OpenMP}, con \code{swarm-abm} verificando que la
+paralelización no rompe los resultados —el punto donde el motor de referencia se
+vuelve indispensable, porque los errores de concurrencia son silenciosos.
+
 \section{Conclusión}
 
 No se afirma que el código C++ sea inutilizable —sería impreciso—. Hay dos cosas

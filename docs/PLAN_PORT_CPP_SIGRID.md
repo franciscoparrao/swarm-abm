@@ -158,3 +158,78 @@ C++ paralelo sin una referencia reproducible contra la cual validarla.
   especificación exacta (constantes y reglas).
 - `models/sigrid/PARITY.md` — la metodología de paridad distribucional ya
   aplicada vs Mesa, a reutilizar tal cual para validar el C++.
+
+## 9. Paralelización: sincronización conservadora (BSP/YAWNS) y patrones de comunicación
+
+Dirección del prof. Marín (2026-07-14). Tres puntos, integrados:
+
+### 9.1 Validación por TENDENCIA al crecer el sistema
+No basta paridad a un tamaño fijo: hay bugs (sobre todo en la versión paralela)
+que solo aparecen al aumentar gradualmente el tamaño. **Ambos motores deben
+mostrar la misma tendencia** a medida que crece el modelo. Acción: extender la
+validación a un barrido de tamaños crecientes (área × agentes), corriendo el
+**modelo completo** (no solo el kernel) en C++ y en swarm-abm, y verificar que
+la curva de la métrica agregada (p. ej. `loss_rate`, o conteos por especie)
+coincide punto a punto al escalar — no solo un valor aislado.
+
+### 9.2 Patrones de comunicación (uno-a-muchos procesadores)
+En paralelo con descomposición de dominio, la comunicación entre procesadores es
+el cuello de botella. Caso citado por Marín: un perro emite una señal a todas las
+ovejas de su piño, repartidas en varios procesadores → patrón **uno-a-muchos**.
+Análisis de los rangos de interacción del modelo vs el mapa (2000 m):
+
+| Interacción | Radio | Alcance |
+|---|---:|---|
+| Percepción oveja / cordero | 100 / 50 m | local |
+| Detección de presa (zorro) | 300 m | local |
+| Cohesión / atracción al perro (oveja) | 500 m | local-medio |
+| Detección de zorros (perro) | 1200 m | **medio-grande** (>½ mapa) |
+| **`fox_active` percibe perro (territorio)** | **6135 / 4295 m** | **GLOBAL (> diagonal del mapa)** |
+
+Dos patrones no-locales concretos:
+- **Global (all-to-any)**: cada zorro/chilla consulta si hay un perro dentro de
+  6135/4295 m — es decir, en todo el mapa. Todo zorro es afectado por *cualquier*
+  perro. Como los perros son pocos (`n_dogs` ≤ ~4), la solución natural es
+  **replicar las posiciones de los perros en todos los procesadores cada
+  superpaso** (broadcast barato). Ese es el patrón uno-a-muchos de Marín, y su
+  costo es bajo por el número chico de emisores.
+- **Medio (halo)**: dog↔zorro (1200 m), oveja↔perro (500 m), zorro↔presa (300 m)
+  se cubren con **halo/ghost** de ancho ≥ 1200 m en las fronteras de bloque.
+
+**Implicancia de escala (clave):** a 2000 m el modelo **no se descompone bien** —
+el halo (1200 m) es del orden del bloque para P≥4 (bloques de 1000 m). La
+descomposición de dominio solo paga cuando el **área** crece hasta que los radios
+de interacción son chicos frente al bloque (p. ej. una estancia de decenas de km
+→ bloques de varios km con halos de 1,2 km). Esto conecta con 9.1 y con definir
+el techo de agentes/área con Marín: **es escalar el área lo que habilita la
+descomposición**, no solo agregar agentes en la misma área.
+
+### 9.3 Sincronización conservadora — el modelo tick-based YA es YAWNS/BSP
+YAWNS (*Yet Another Windowing Network Simulator*, Nicol) es un algoritmo
+**conservador** de PDES: en vez de sincronizar evento por evento (Chandy–Misra–
+Bryant) o optimista con rollback (Time Warp), avanza todos los procesos hasta una
+frontera temporal común `T+ε` y sincroniza con una **barrera global**; es exacto
+si `ε ≤ lookahead` (el mínimo retardo antes de que un evento afecte a otro LP).
+Es, en esencia, **BSP** — encaja con el BSPonMPI que pide Marín.
+
+Mapeo a nuestro caso: el modelo es **time-stepped con instantánea de inicio de
+paso** (`before_step`: todos leen el estado congelado del tick). Eso ya es una
+simulación conservadora con **ventana ε = 1 tick**: (1) cómputo local leyendo
+halo/ghost del vecino, (2) barrera, (3) intercambio de agentes de frontera. No
+hay causalidad violable dentro del tick porque nadie ve las mutaciones del tick
+en curso. Es decir: **el port, tal como está, es directamente paralelizable en
+modo conservador BSP/YAWNS** — la instantánea que replicamos para la paridad es
+la misma que hace segura la ejecución paralela.
+
+- **OpenMP (un nodo, memoria compartida)**: la barrera es implícita entre las dos
+  fases (todos leen `snap`, todos escriben `new_pos`); es el Hito 4 directo.
+- **BSPonMPI (multi-nodo)**: superpasos = ticks; halo exchange de agentes de
+  frontera + broadcast de perros; ε=1 tick, lookahead=1 tick. YAWNS en su forma
+  estricta (ε ≤ min retardo de evento) recién sería necesario **si** se pasa a
+  modo *event-driven* (que Marín mencionó para baja densidad de agentes); ahí ε
+  se define por el mínimo tiempo entre eventos que cruzan procesadores.
+
+**Pendiente para Manuel** (encargo de Marín): estudiar YAWNS y si conviene la
+variante event-driven conservadora. Referencia: buscar "parallel discrete event
+simulation YAWNS" (Nicol; ROSS implementa YAWNS conservador y Time Warp
+optimista).
