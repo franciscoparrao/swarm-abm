@@ -49,6 +49,28 @@ prof. Marín anticipó):
 Compilar: `g++ -std=c++17 -O3 -march=native -fopenmp sheep_fox.cpp -o
 sheep_fox_omp`. Sin `-fopenmp` compila la versión serial idéntica.
 
+### Validación por tendencia al escalar (encargo del prof. Marín, §9.1 del plan)
+
+Marín señaló que hay errores que solo aparecen al aumentar el tamaño del
+sistema, y que **ambos motores deben tener la misma tendencia al crecer**. Se
+corrió el modelo completo (versión OpenMP) y el oráculo swarm-abm a tamaños
+crecientes (escalando `sheep_density`), verificando que el desvío entre motores
+**no crece** con el tamaño. Sin perros (métrica en rango sensible en todos los
+tamaños), 5 semillas:
+
+| sheep_dens | ~agentes | C++ (OpenMP) | swarm-abm | \|Δ\| |
+|---:|---:|---:|---:|---:|
+| 0.96 | 384 | 49.4% | 51.3% | 1.9 |
+| 2.00 | 800 | 27.4% | 27.2% | 0.1 |
+| 4.00 | 1600 | 14.8% | 14.7% | 0.1 |
+| 8.00 | 3200 | 7.2% | 7.6% | 0.4 |
+
+**Pearson r = 0.9995.** Ambos motores trazan la **misma curva** (el loss cae al
+diluirse con más ovejas) y el desvío se mantiene ≤ 1.9 pp **sin crecer con el
+tamaño** — no hay bug de escala. El mismo barrido con 2 perros da un desvío que
+incluso **decrece** al crecer (4.7 → 2.4 → 0.2 → 0.0 → 0.1; el 4.7 del extremo
+chico es la alta varianza de perros con pocas ovejas, no un defecto de escala).
+
 ## Hito 3 — liebres (presa alternativa) + chillas (segundo depredador)
 
 ### Hito 3 — liebres (presa alternativa) + chillas (segundo depredador)
