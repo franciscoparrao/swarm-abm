@@ -5,7 +5,7 @@ Implementación en C++ del modelo de ovejas SIGRID, para la vía de escala
 de referencia**: el C++ se valida contra él por paridad distribucional. Ver el
 plan completo en `../../docs/PLAN_PORT_CPP_SIGRID.md`.
 
-## Estado: Hitos 1–4 completos — modelo de *screening* + OpenMP determinista
+## Estado: Hitos 1–5 completos — screening + OpenMP determinista + layout memory-bound
 
 Las cuatro especies (oveja, zorro, perro guardián, liebre, chilla) están
 portadas y validadas contra el oráculo swarm-abm, y la versión paralela (OpenMP)
@@ -64,6 +64,43 @@ prof. Marín anticipó):
 
 Compilar: `g++ -std=c++17 -O3 -march=native -fopenmp sheep_fox.cpp -o
 sheep_fox_omp`. Sin `-fopenmp` compila la versión serial idéntica.
+
+### Hito 5 — layout memory-bound (el techo real, atacado sin cambiar resultados)
+
+El índice espacial dejó de ser una **lista ligada** (`head`/`nxt`) sobre structs
+de 48 B y pasó a un **counting-sort por celda (CSR + SoA)**: los agentes quedan
+contiguos por celda (`cellStart[c]..cellStart[c+1]`), con las coordenadas
+calientes `(x,y)` en un arreglo aparte de los campos fríos. El barrido de
+vecindad toca solo 16 B por candidato de forma **secuencial** (amigable al
+prefetcher) en vez de saltar 48 B por punteros, y los campos fríos se reúnen solo
+en los aciertos. Además, la consulta de forrajeo de la oveja —la más caliente—
+usaba radio 500 m (que solo existe para ver perros); **sin perros en el modelo se
+reduce a 100 m** (`cr` 9→2, ~14× menos celdas), lo cual es lícito porque los
+agentes extra que el barrido a 500 tocaba se descartaban igual.
+
+**Clave metodológica — bit-idéntico**: el orden de visita se preservó exacto
+(índice descendente dentro de celda, mismo recorrido de bloque), así que la
+optimización **no cambia ni un bit** del resultado. Verificado: `serial` y `omp`
+dan el **mismo hash** que Hito 4b en todo el barrido de screening (ovejas, zorros,
+perros, liebres, chillas), y el determinismo por hilos (1/4/8) se mantiene. Como
+no cambia la semántica, la paridad con el oráculo (Pearson 0,9976) se hereda sin
+re-validar — es un cambio de layout, no de modelo.
+
+**Por qué importa el régimen**: en un solo hilo a tamaños factibles la
+instantánea cabe en L2 (i7-1270P, L2 1,25 MB), así que ahí el layout no cambia el
+tiempo (0 % de regresión, 0 % de ganancia — no es memory-bound). La ganancia
+aparece en el régimen que el prof. Marín señaló: **densidad alta en área fija**,
+donde cada consulta recorre miles de vecinos. Medido por `user`-CPU-time (robusto
+a la carga de la máquina compartida), 800×800 m a 40 ovejas/ha:
+
+| caso | base | Hito 5 | speedup |
+|---|---:|---:|---:|
+| con perros (solo SoA, guarda inactiva) | 3,73 s | 2,97 s | **1,26×** |
+| sin perros (SoA + guarda de radio) | 4,74 s | 1,06 s | **4,5×** |
+
+Es decir: el layout SoA/CSR da ~1,25× en el régimen memory-bound, y la reducción
+de radio de la consulta caliente lleva el caso de screening típico (sin perros) a
+~4,5×. Todo bit-idéntico.
 
 ### Validación por tendencia al escalar (encargo del prof. Marín, §9.1 del plan)
 
@@ -210,9 +247,11 @@ El oráculo se construye desde un árbol limpio en HEAD:
 
 ## Próximos hitos
 
-5. **Optimización memory-bound** (el techo real): layout SoA, `Snap` más compacto,
-   reducir el tráfico de las queries — antes de paralelizar más.
 6. **BSPonMPI** (multi-nodo): descomposición de dominio + halo + broadcast de
    perros; superpasos = ticks (el modelo ya es conservador BSP, ver §9 del plan).
 7. **(Según decisión de alcance)** subsistemas del Mesa completo (infraestructura,
    estacionalidad, rasters GIS) — ver §7 del plan. Se agregan primero al oráculo.
+
+> Pendiente menor de Hito 5: medir el speedup paralelo (16 hilos) en el régimen
+> memory-bound cuando la máquina compartida esté descargada — es donde el layout
+> SoA debería relajar el techo de ancho de banda de DRAM del que hablaba Hito 4b.

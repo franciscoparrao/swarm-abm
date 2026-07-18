@@ -65,6 +65,11 @@ struct Animal {
 };
 
 struct Snap { double x, y; int species; bool alive, is_lamb; double vulnerability, energy; int mother; };
+// Layout SoA para la instantánea (Hito 5): coords calientes separadas de los
+// campos fríos. `Snap` sigue siendo la interfaz del callback (se reconstruye en
+// el acierto), así que los cuerpos de las consultas no cambian.
+struct XY { double x, y; };
+struct SnapCold { double vulnerability, energy; int species, mother; uint8_t alive, is_lamb; };
 
 struct Raster {
     int cols, rows; double height; std::vector<double> data;
@@ -110,30 +115,61 @@ struct Params { double width = 2000, height = 2000, sheep_density = 0.96, fox_de
                 fox_predation_effectiveness = 0.14, lamb_proportion = 0.2,
                 chilla_density = 0.0, hare_density = 0.0; int n_dogs = 0; };
 
-// ---- espacio: índice de celdas sobre la instantánea ----
+// ---- espacio: índice de celdas sobre la instantánea (CSR + SoA) ----
+// Layout memory-bound (Hito 5): en vez de una lista ligada (head/nxt) sobre
+// structs de 48 B, se hace un counting-sort de los agentes por celda —CSR:
+// cellStart[c]..cellStart[c+1]— con las coordenadas calientes (x,y) en un arreglo
+// contiguo aparte de los campos fríos. El barrido de vecindad toca solo 16 B por
+// candidato de forma SECUENCIAL (amigable al prefetcher) y reúne los campos fríos
+// solo en los aciertos. El ORDEN de visita se mantiene idéntico a la lista ligada
+// (índice descendente dentro de la celda, mismo recorrido de bloque) => resultados
+// bit-idénticos: cambia el layout, no la semántica.
 struct Grid {
-    int nx, ny; double csz, w, h; std::vector<int> head; std::vector<int> nxt;
-    void build(const std::vector<Snap>& s, double W, double H) {
-        w = W; h = H; csz = SPACE_CELL;
-        nx = std::max(1, (int)(W / csz)); ny = std::max(1, (int)(H / csz));
-        head.assign((size_t)nx * ny, -1); nxt.assign(s.size(), -1);
-        for (size_t i = 0; i < s.size(); ++i) { int c = cell(s[i].x, s[i].y); nxt[i] = head[c]; head[c] = (int)i; }
-    }
+    int nx, ny; double csz, w, h;
+    std::vector<int> cellStart;    // offsets CSR, tamaño nx*ny+1
+    std::vector<XY> spos;          // coords calientes, ordenadas por celda
+    std::vector<SnapCold> scold;   // campos fríos, mismo orden
+    std::vector<int> sid;          // índice de agente original (para mutar el vivo)
     int cell(double px, double py) const {
         int cx = (int)(px / csz); if (cx < 0) cx = 0; if (cx > nx - 1) cx = nx - 1;
         int cy = (int)(py / csz); if (cy < 0) cy = 0; if (cy > ny - 1) cy = ny - 1;
         return cy * nx + cx;
     }
-    // aplica f(snap, dist) a los vecinos a distancia <= radius
-    template <class F> void within(const std::vector<Snap>& s, double px, double py, double radius, F f) const {
+    void build(const std::vector<Animal>& agents, double W, double H) {
+        w = W; h = H; csz = SPACE_CELL;
+        nx = std::max(1, (int)(W / csz)); ny = std::max(1, (int)(H / csz));
+        size_t ncell = (size_t)nx * ny, n = agents.size();
+        cellStart.assign(ncell + 1, 0);
+        for (size_t i = 0; i < n; ++i) cellStart[cell(agents[i].x, agents[i].y) + 1]++;
+        for (size_t c = 0; c < ncell; ++c) cellStart[c + 1] += cellStart[c];
+        spos.resize(n); scold.resize(n); sid.resize(n);
+        // cursor por celda = su offset de inicio; se llena iterando i de n-1 a 0
+        // para que dentro de cada celda el orden quede por índice DESCENDENTE,
+        // igual que el recorrido de la lista ligada (head-prepend).
+        std::vector<int> cursor(cellStart.begin(), cellStart.begin() + ncell);
+        for (size_t ii = n; ii-- > 0; ) {
+            const Animal& a = agents[ii];
+            int p = cursor[cell(a.x, a.y)]++;
+            spos[p] = {a.x, a.y};
+            scold[p] = {a.vulnerability, a.energy, a.species, a.mother, (uint8_t)a.alive, (uint8_t)a.is_lamb};
+            sid[p] = (int)ii;
+        }
+    }
+    // aplica f(snap, dist) a los vecinos a distancia <= radius (mismo orden que la lista ligada)
+    template <class F> void within(double px, double py, double radius, F f) const {
         int cx = (int)(px / csz); if (cx < 0) cx = 0; if (cx > nx - 1) cx = nx - 1;
         int cy = (int)(py / csz); if (cy < 0) cy = 0; if (cy > ny - 1) cy = ny - 1;
         int cr = (int)(radius / csz) + 1;
         for (int dy = -cr; dy <= cr; ++dy) for (int dx = -cr; dx <= cr; ++dx) {
             int ax = cx + dx, ay = cy + dy; if (ax < 0 || ay < 0 || ax >= nx || ay >= ny) continue;
-            for (int j = head[(size_t)ay * nx + ax]; j != -1; j = nxt[j]) {
-                double ddx = s[j].x - px, ddy = s[j].y - py; double d = std::sqrt(ddx * ddx + ddy * ddy);
-                if (d <= radius) f(s[j], d);
+            int c = ay * nx + ax, e = cellStart[c + 1];
+            for (int p = cellStart[c]; p < e; ++p) {
+                double ddx = spos[p].x - px, ddy = spos[p].y - py; double d = std::sqrt(ddx * ddx + ddy * ddy);
+                if (d <= radius) {
+                    const SnapCold& cd = scold[p];
+                    Snap sn{spos[p].x, spos[p].y, cd.species, (bool)cd.alive, (bool)cd.is_lamb, cd.vulnerability, cd.energy, cd.mother};
+                    f(sn, d);
+                }
             }
         }
     }
@@ -157,7 +193,7 @@ static void build_rasters(double W, double H, Rng& rng, Raster& quality, Raster&
 }
 
 struct Model {
-    std::vector<Animal> agents; std::vector<Snap> snap; Grid grid;
+    std::vector<Animal> agents; Grid grid;
     Raster veg_quality, veg_cover; Params params;
     std::vector<std::pair<double,double>> dog_positions;
     int current_hour = 0; uint64_t step_count = 0;
@@ -165,14 +201,12 @@ struct Model {
 
     void before_step() {
         current_hour = (int)(step_count % 24); step_count++;
-        snap.resize(agents.size());
         dog_positions.clear();
         for (size_t i = 0; i < agents.size(); ++i) {
             const Animal& a = agents[i];
-            snap[i] = {a.x, a.y, a.species, a.alive, a.is_lamb, a.vulnerability, a.energy, a.mother};
             if (a.alive && a.species == DOG) dog_positions.push_back({a.x, a.y});
         }
-        grid.build(snap, params.width, params.height);
+        grid.build(agents, params.width, params.height);
     }
 
     // nearest_dog_dist: menor distancia a un perro dentro de `max`, o -1 si ninguno.
@@ -202,7 +236,7 @@ static void step_sheep(Model& m, int i, PRng& rng) {
     if (s.fear > 0.7) {
         double radius = s.is_lamb ? LAMB_PERCEPTION_RADIUS : SHEEP_PERCEPTION_RADIUS;
         double pbest = 1e300, ppx = 0, ppy = 0; bool found = false;
-        m.grid.within(m.snap, s.x, s.y, radius, [&](const Snap& sn, double d) {
+        m.grid.within(s.x, s.y, radius, [&](const Snap& sn, double d) {
             if (sn.alive && sn.species == FOX && d < pbest) { pbest = d; ppx = sn.x; ppy = sn.y; found = true; } });
         double sp = s.is_lamb ? LAMB_FLEE_SPEED : SHEEP_FLEE_SPEED;
         double dx, dy;
@@ -219,7 +253,12 @@ static void step_sheep(Model& m, int i, PRng& rng) {
             for (int k = 0; k < 8; ++k) { double a = TAU * k / 8.0, ox = std::cos(a), oy = std::sin(a);
                 double cov = m.veg_cover.get(s.x + ox * 50.0, s.y + oy * 50.0); if (cov > worst) { worst = cov; vrx = -ox; vry = -oy; } }
             double cx = 0, cy = 0, n = 0, dog_best = 1e300, dgx = 0, dgy = 0;
-            m.grid.within(m.snap, s.x, s.y, std::max(SHEEP_PERCEPTION_RADIUS, 500.0), [&](const Snap& sn, double d) {
+            // El radio 500 solo existe para ver perros; la cohesión de ovejas usa
+            // <=100. Sin perros en el modelo, reducir a 100 es BIT-IDÉNTICO (los
+            // agentes extra que el barrido a 500 tocaba se descartan igual) y
+            // recorta ~14x las celdas de esta consulta —la más caliente— (cr 9->2).
+            double graze_r = m.dog_positions.empty() ? SHEEP_PERCEPTION_RADIUS : std::max(SHEEP_PERCEPTION_RADIUS, 500.0);
+            m.grid.within(s.x, s.y, graze_r, [&](const Snap& sn, double d) {
                 if (!sn.alive) return;
                 if (sn.species == SHEEP && d <= SHEEP_PERCEPTION_RADIUS) { cx += sn.x; cy += sn.y; n += 1; }
                 if (sn.species == DOG && d < dog_best) { dog_best = d; dgx = sn.x; dgy = sn.y; } });
@@ -247,7 +286,7 @@ static double predation_probability(Model& m, int fox_i, int prey_i) {
     double dnd = m.nearest_dog_dist(fox.x, fox.y, 500.0);
     double m_dog = (dnd >= 0) ? -DOG_PROTECTION_STRENGTH * (1.0 - dnd / 500.0) : 0.0;
     double nearby = 0;
-    m.grid.within(m.snap, prey.x, prey.y, 50.0, [&](const Snap& sn, double) { if (sn.alive && sn.species == SHEEP) nearby += 1; });
+    m.grid.within(prey.x, prey.y, 50.0, [&](const Snap& sn, double) { if (sn.alive && sn.species == SHEEP) nearby += 1; });
     double m_group = -0.03 * std::min(nearby / 10.0, 1.0);
     double m_condition = 0.03 * (1.0 - prey.energy / 100.0);
     double m_mother = 0.0;
@@ -276,14 +315,15 @@ static void fox_detect(const Model& m, double fx, double fy, std::vector<int>& p
     int gx = (int)(fx / m.grid.csz); if (gx < 0) gx = 0; if (gx > m.grid.nx - 1) gx = m.grid.nx - 1;
     int gy = (int)(fy / m.grid.csz); if (gy < 0) gy = 0; if (gy > m.grid.ny - 1) gy = m.grid.ny - 1;
     int cr = (int)(FOX_DETECTION_RADIUS / m.grid.csz) + 1;
+    const Grid& g = m.grid;
     for (int dy = -cr; dy <= cr; ++dy) for (int dx = -cr; dx <= cr; ++dx) {
-        int ax = gx + dx, ay = gy + dy; if (ax < 0 || ay < 0 || ax >= m.grid.nx || ay >= m.grid.ny) continue;
-        for (int j = m.grid.head[(size_t)ay * m.grid.nx + ax]; j != -1; j = m.grid.nxt[j]) {
-            const Snap& sn = m.snap[j];
-            double ddx = sn.x - fx, ddy = sn.y - fy; if (std::sqrt(ddx * ddx + ddy * ddy) > FOX_DETECTION_RADIUS) continue;
-            if (!sn.alive) continue;
-            if (sn.species == SHEEP) prey.push_back(j);
-            else if (sn.species == HARE) { hares_nearby++; prey.push_back(j); }
+        int ax = gx + dx, ay = gy + dy; if (ax < 0 || ay < 0 || ax >= g.nx || ay >= g.ny) continue;
+        int c = ay * g.nx + ax, e = g.cellStart[c + 1];
+        for (int p = g.cellStart[c]; p < e; ++p) {
+            double ddx = g.spos[p].x - fx, ddy = g.spos[p].y - fy; if (std::sqrt(ddx * ddx + ddy * ddy) > FOX_DETECTION_RADIUS) continue;
+            const SnapCold& cd = g.scold[p]; if (!cd.alive) continue;
+            if (cd.species == SHEEP) prey.push_back(g.sid[p]);
+            else if (cd.species == HARE) { hares_nearby++; prey.push_back(g.sid[p]); }
         }
     }
 }
@@ -371,7 +411,7 @@ static void step_hare(Model& m, int i, PRng& rng) {
     if (!h.mature && h.age_days * 24.0 >= HARE_MATURITY_AGE_H) { h.mature = true; h.vulnerability = HARE_VULN_MATURE; }
     h.fear = std::max(h.fear - 0.15, 0.0);
     double pbest = 1e300, ppx = 0, ppy = 0; bool found = false;
-    m.grid.within(m.snap, h.x, h.y, HARE_PERCEPTION_RADIUS, [&](const Snap& sn, double d) {
+    m.grid.within(h.x, h.y, HARE_PERCEPTION_RADIUS, [&](const Snap& sn, double d) {
         if (sn.alive && sn.species == FOX && d < pbest) { pbest = d; ppx = sn.x; ppy = sn.y; found = true; } });
     if (found || h.fear > 0.5) {
         double dx, dy;
@@ -393,12 +433,14 @@ static void step_dog(Model& m, int i) {
         int gx = (int)(dog.x / m.grid.csz); if (gx < 0) gx = 0; if (gx > m.grid.nx - 1) gx = m.grid.nx - 1;
         int gy = (int)(dog.y / m.grid.csz); if (gy < 0) gy = 0; if (gy > m.grid.ny - 1) gy = m.grid.ny - 1;
         int cr = (int)(DOG_DETECTION_RADIUS / m.grid.csz) + 1;
+        const Grid& g = m.grid;
         for (int ddy = -cr; ddy <= cr; ++ddy) for (int ddx = -cr; ddx <= cr; ++ddx) {
-            int ax = gx + ddx, ay = gy + ddy; if (ax < 0 || ay < 0 || ax >= m.grid.nx || ay >= m.grid.ny) continue;
-            for (int j = m.grid.head[(size_t)ay * m.grid.nx + ax]; j != -1; j = m.grid.nxt[j]) {
-                const Snap& sn = m.snap[j]; if (!sn.alive || sn.species != FOX) continue;
-                double dx = sn.x - dog.x, dy = sn.y - dog.y, dist = std::sqrt(dx * dx + dy * dy);
-                if (dist <= DOG_DETECTION_RADIUS && dist < best) { best = dist; bx = sn.x; by = sn.y; best_id = j; }
+            int ax = gx + ddx, ay = gy + ddy; if (ax < 0 || ay < 0 || ax >= g.nx || ay >= g.ny) continue;
+            int c = ay * g.nx + ax, e = g.cellStart[c + 1];
+            for (int p = g.cellStart[c]; p < e; ++p) {
+                const SnapCold& cd = g.scold[p]; if (!cd.alive || cd.species != FOX) continue;
+                double dx = g.spos[p].x - dog.x, dy = g.spos[p].y - dog.y, dist = std::sqrt(dx * dx + dy * dy);
+                if (dist <= DOG_DETECTION_RADIUS && dist < best) { best = dist; bx = g.spos[p].x; by = g.spos[p].y; best_id = g.sid[p]; }
             }
         }
     }
@@ -415,11 +457,13 @@ static void step_dog(Model& m, int i) {
             int gx = (int)(dog.x / m.grid.csz); if (gx < 0) gx = 0; if (gx > m.grid.nx - 1) gx = m.grid.nx - 1;
             int gy = (int)(dog.y / m.grid.csz); if (gy < 0) gy = 0; if (gy > m.grid.ny - 1) gy = m.grid.ny - 1;
             int cr = (int)(DOG_CHASE_RADIUS / m.grid.csz) + 1;
+            const Grid& g = m.grid;
             for (int ddy = -cr; ddy <= cr; ++ddy) for (int ddx = -cr; ddx <= cr; ++ddx) {
-                int ax = gx + ddx, ay = gy + ddy; if (ax < 0 || ay < 0 || ax >= m.grid.nx || ay >= m.grid.ny) continue;
-                for (int j = m.grid.head[(size_t)ay * m.grid.nx + ax]; j != -1; j = m.grid.nxt[j]) {
-                    const Snap& sn = m.snap[j]; if (!sn.alive || sn.species != FOX || j == best_id) continue;
-                    double dx = sn.x - dog.x, dy = sn.y - dog.y; if (std::sqrt(dx * dx + dy * dy) <= DOG_CHASE_RADIUS) deterred.push_back({j, {sn.x, sn.y}});
+                int ax = gx + ddx, ay = gy + ddy; if (ax < 0 || ay < 0 || ax >= g.nx || ay >= g.ny) continue;
+                int c = ay * g.nx + ax, e = g.cellStart[c + 1];
+                for (int p = g.cellStart[c]; p < e; ++p) {
+                    const SnapCold& cd = g.scold[p]; int j = g.sid[p]; if (!cd.alive || cd.species != FOX || j == best_id) continue;
+                    double dx = g.spos[p].x - dog.x, dy = g.spos[p].y - dog.y; if (std::sqrt(dx * dx + dy * dy) <= DOG_CHASE_RADIUS) deterred.push_back({j, {g.spos[p].x, g.spos[p].y}});
                 }
             }
             uint64_t now = m.step_count;
