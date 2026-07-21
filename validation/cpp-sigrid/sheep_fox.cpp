@@ -130,29 +130,91 @@ struct Grid {
     std::vector<XY> spos;          // coords calientes, ordenadas por celda
     std::vector<SnapCold> scold;   // campos fríos, mismo orden
     std::vector<int> sid;          // índice de agente original (para mutar el vivo)
+    std::vector<int> hist;         // histogramas por-hilo [T*ncell], reusado entre pasos
     int cell(double px, double py) const {
         int cx = (int)(px / csz); if (cx < 0) cx = 0; if (cx > nx - 1) cx = nx - 1;
         int cy = (int)(py / csz); if (cy < 0) cy = 0; if (cy > ny - 1) cy = ny - 1;
         return cy * nx + cx;
     }
+    // Counting-sort del índice, PARALELO y bit-idéntico al serial (Hito 5+):
+    // histogramas locales por hilo + offsets por (hilo,celda) tales que dentro de
+    // cada celda el orden final sea índice global DESCENDENTE, INDEPENDIENTE del
+    // número de hilos. Clave: los chunks de índice más alto ocupan los primeros
+    // slots de la celda y cada hilo scatterea su chunk en orden descendente, así
+    // la concatenación [chunk T-1 desc][T-2 desc]...[0 desc] = global descendente,
+    // igual que el recorrido serial (== lista ligada de Hito 4b).
     void build(const std::vector<Animal>& agents, double W, double H) {
         w = W; h = H; csz = SPACE_CELL;
         nx = std::max(1, (int)(W / csz)); ny = std::max(1, (int)(H / csz));
         size_t ncell = (size_t)nx * ny, n = agents.size();
         cellStart.assign(ncell + 1, 0);
-        for (size_t i = 0; i < n; ++i) cellStart[cell(agents[i].x, agents[i].y) + 1]++;
-        for (size_t c = 0; c < ncell; ++c) cellStart[c + 1] += cellStart[c];
         spos.resize(n); scold.resize(n); sid.resize(n);
-        // cursor por celda = su offset de inicio; se llena iterando i de n-1 a 0
-        // para que dentro de cada celda el orden quede por índice DESCENDENTE,
-        // igual que el recorrido de la lista ligada (head-prepend).
-        std::vector<int> cursor(cellStart.begin(), cellStart.begin() + ncell);
-        for (size_t ii = n; ii-- > 0; ) {
-            const Animal& a = agents[ii];
-            int p = cursor[cell(a.x, a.y)]++;
-            spos[p] = {a.x, a.y};
-            scold[p] = {a.vulnerability, a.energy, a.species, a.mother, (uint8_t)a.alive, (uint8_t)a.is_lamb};
-            sid[p] = (int)ii;
+        if (n == 0) return;
+#ifdef _OPENMP
+        int T = omp_get_max_threads();
+        if ((size_t)T > n) T = (int)n; if (T < 1) T = 1;
+#else
+        int T = 1;
+#endif
+        // Camino serial (T==1): el counting-sort simple, sin el overhead de los
+        // histogramas por-hilo. Idéntico al de Hito 5 -> sin regresión a 1 hilo.
+        if (T == 1) {
+            for (size_t i = 0; i < n; ++i) cellStart[cell(agents[i].x, agents[i].y) + 1]++;
+            for (size_t c = 0; c < ncell; ++c) cellStart[c + 1] += cellStart[c];
+            hist.assign(ncell, 0);
+            for (size_t c = 0; c < ncell; ++c) hist[c] = cellStart[c];  // cursor = inicio de celda
+            for (size_t ii = n; ii-- > 0; ) {
+                const Animal& a = agents[ii];
+                int p = hist[cell(a.x, a.y)]++;
+                spos[p] = {a.x, a.y};
+                scold[p] = {a.vulnerability, a.energy, a.species, a.mother, (uint8_t)a.alive, (uint8_t)a.is_lamb};
+                sid[p] = (int)ii;
+            }
+            return;
+        }
+        // Camino paralelo (T>1): un solo team. Fase 1 histograma local; luego un
+        // `single` calcula cellStart y los cursores por (hilo,celda); Fase 3 scatter.
+        hist.assign((size_t)T * ncell, 0);
+        #pragma omp parallel num_threads(T)
+        {
+#ifdef _OPENMP
+            int t = omp_get_thread_num();
+#else
+            int t = 0;
+#endif
+            size_t lo = (size_t)t * n / T, hi = (size_t)(t + 1) * n / T;
+            // Fase 1: histograma local del chunk de este hilo.
+            { int* h = &hist[(size_t)t * ncell];
+              for (size_t i = lo; i < hi; ++i) h[cell(agents[i].x, agents[i].y)]++; }
+            #pragma omp barrier
+            // Fase 2 (un solo hilo): totales -> cellStart (prefijo) y offset inicial
+            // de cada (hilo,celda) tal que los hilos de índice mayor van primero.
+            #pragma omp single
+            {
+                for (size_t c = 0; c < ncell; ++c) {
+                    int total = 0;
+                    for (int tt = 0; tt < T; ++tt) total += hist[(size_t)tt * ncell + c];
+                    cellStart[c + 1] = total;
+                }
+                for (size_t c = 0; c < ncell; ++c) cellStart[c + 1] += cellStart[c];
+                for (size_t c = 0; c < ncell; ++c) {
+                    int acc = cellStart[c];
+                    for (int tt = T - 1; tt >= 0; --tt) {
+                        size_t idx = (size_t)tt * ncell + c; int cnt = hist[idx];
+                        hist[idx] = acc; acc += cnt;
+                    }
+                }
+            } // barrera implícita al cerrar el `single`
+            // Fase 3: scatter del chunk en índice DESCENDENTE con cursor local
+            // (rangos de slots disjuntos entre hilos -> sin conflictos de escritura).
+            int* cur = &hist[(size_t)t * ncell];
+            for (size_t ii = hi; ii-- > lo; ) {
+                const Animal& a = agents[ii];
+                int p = cur[cell(a.x, a.y)]++;
+                spos[p] = {a.x, a.y};
+                scold[p] = {a.vulnerability, a.energy, a.species, a.mother, (uint8_t)a.alive, (uint8_t)a.is_lamb};
+                sid[p] = (int)ii;
+            }
         }
     }
     // aplica f(snap, dist) a los vecinos a distancia <= radius (mismo orden que la lista ligada)

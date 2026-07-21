@@ -128,8 +128,37 @@ Dos lecturas:
 
 Nota sobre el ratio de speedup: HITO 5 tiene una base serial ya ~1,45× más rápida,
 así que su fracción paralelizable es menor (Amdahl) y el *ratio* no infla — pero el
-*tiempo absoluto* es mejor en todos los puntos, que es lo que importa. El
-counting-sort del índice quedó serial; paralelizarlo sería la siguiente palanca.
+*tiempo absoluto* es mejor en todos los puntos, que es lo que importa.
+
+### Hito 5b — counting-sort del índice paralelo (bit-idéntico)
+
+El `build` del índice (el counting-sort que se rehace cada tick) era la parte
+serial que quedaba en el paso (el término de Amdahl citado arriba). Ahora es
+**paralelo** manteniendo la bit-identidad, que es el punto no trivial: un
+counting-sort paralelo ingenuo cambia el orden intra-celda y rompería la
+igualdad. La técnica:
+
+1. **Histogramas locales por hilo** sobre chunks contiguos de índice (fase
+   paralela).
+2. **Offsets por (hilo, celda)** calculados de modo que los chunks de índice
+   *mayor* ocupen los primeros slots de cada celda, y cada hilo scatterea su
+   chunk en orden **descendente** (fase paralela). La concatenación
+   `[chunk T-1 desc][T-2 desc]…[0 desc]` da índice global descendente **para
+   cualquier número de hilos** — exactamente el orden serial (== lista ligada de
+   Hito 4b).
+
+Verificado: `serial` y `omp` dan el **mismo hash** que Hito 5 en todo el barrido
+de screening, y el determinismo por hilos (1/4/16) se mantiene. Un **camino
+rápido para T==1** usa el counting-sort simple (sin el overhead de los
+histogramas por-hilo), así que no hay regresión a un hilo.
+
+Dónde ayuda: cuando el `build` es una fracción no trivial del paso —régimenes
+dispersos / de pocas queries por agente—. En el régimen de **densidad alta** el
+`build` es una fracción pequeña (domina la fase A de las ovejas), así que ahí el
+efecto es ~neutro; la medición limpia de wall-clock paralelo en régimen
+build-dominado quedó pendiente porque la estación compartida volvió a carga alta
+(≈22/16) durante esta sesión. La ganancia estructural —quitar la sección serial
+del paso— es la que importa de cara a BSPonMPI (Hito 6).
 
 ### Validación por tendencia al escalar (encargo del prof. Marín, §9.1 del plan)
 
@@ -281,5 +310,5 @@ El oráculo se construye desde un árbol limpio en HEAD:
 7. **(Según decisión de alcance)** subsistemas del Mesa completo (infraestructura,
    estacionalidad, rasters GIS) — ver §7 del plan. Se agregan primero al oráculo.
 
-> Siguiente palanca de rendimiento (opcional): el counting-sort del índice quedó
-> serial; paralelizarlo relajaría la parte de Amdahl que ahora domina en HITO 5.
+> Pendiente de medición (no de implementación): wall-clock paralelo del
+> counting-sort (Hito 5b) en un régimen build-dominado con la máquina descargada.
