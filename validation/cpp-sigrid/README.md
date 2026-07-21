@@ -102,6 +102,35 @@ Es decir: el layout SoA/CSR da ~1,25× en el régimen memory-bound, y la reducci
 de radio de la consulta caliente lleva el caso de screening típico (sin perros) a
 ~4,5×. Todo bit-idéntico.
 
+**Escalamiento paralelo — el techo de ancho de banda se relajó** (lo que
+anticipaba Hito 4b). Con la máquina descargada, régimen memory-bound (1200×1200 m,
+40 ovejas/ha, 6 días), min-of-5, wall-clock, i7-1270P (4 P-cores/8 hilos +
+8 E-cores):
+
+| hilos | BASE 4b + perros | HITO 5 + perros (aísla SoA) | HITO 5 sin perros |
+|---:|---:|---:|---:|
+| 1  | 16,86 s (1,00×) | 11,66 s (1,00×) | 3,16 s (1,00×) |
+| 4  | 7,81 s (2,15×)  | 5,77 s (2,02×)  | 1,93 s (1,63×) |
+| 8  | **8,24 s (2,04×)** | 5,09 s (2,28×) | 1,34 s (2,36×) |
+| 16 | 5,85 s (2,88×)  | 3,93 s (2,96×)  | 1,08 s (2,92×) |
+
+Dos lecturas:
+
+1. **BASE 4b regresa a 8 hilos** (8,24 s > 7,81 s de 4 hilos): es el techo de ancho
+   de banda del que hablaba Hito 4b — con structs de 48 B recorridos por punteros,
+   8 hilos saturan el bus antes de aprovechar los núcleos. HITO 5 escala **monótono**
+   (5,77 → 5,09 → 3,93): al streamear 16 B contiguos por candidato, el bus ya no es
+   el cuello y sumar hilos vuelve a ayudar. El SoA **relajó el techo**.
+2. **Throughput absoluto: HITO 5 gana a cada conteo de hilos.** Solo-SoA (mismo
+   trabajo, con perros) es **1,45× a 1 hilo y 1,49× a 16**. En el caso de screening
+   real (sin perros), HITO 5 a 16 hilos es **5,4× más rápido** que el mejor del
+   BASE 4b — y HITO 5 a *un* hilo (3,16 s) ya **le gana al BASE a 16 hilos** (5,85 s).
+
+Nota sobre el ratio de speedup: HITO 5 tiene una base serial ya ~1,45× más rápida,
+así que su fracción paralelizable es menor (Amdahl) y el *ratio* no infla — pero el
+*tiempo absoluto* es mejor en todos los puntos, que es lo que importa. El
+counting-sort del índice quedó serial; paralelizarlo sería la siguiente palanca.
+
 ### Validación por tendencia al escalar (encargo del prof. Marín, §9.1 del plan)
 
 Marín señaló que hay errores que solo aparecen al aumentar el tamaño del
@@ -252,6 +281,5 @@ El oráculo se construye desde un árbol limpio en HEAD:
 7. **(Según decisión de alcance)** subsistemas del Mesa completo (infraestructura,
    estacionalidad, rasters GIS) — ver §7 del plan. Se agregan primero al oráculo.
 
-> Pendiente menor de Hito 5: medir el speedup paralelo (16 hilos) en el régimen
-> memory-bound cuando la máquina compartida esté descargada — es donde el layout
-> SoA debería relajar el techo de ancho de banda de DRAM del que hablaba Hito 4b.
+> Siguiente palanca de rendimiento (opcional): el counting-sort del índice quedó
+> serial; paralelizarlo relajaría la parte de Amdahl que ahora domina en HITO 5.
