@@ -5,7 +5,13 @@ Implementación en C++ del modelo de ovejas SIGRID, para la vía de escala
 de referencia**: el C++ se valida contra él por paridad distribucional. Ver el
 plan completo en `../../docs/PLAN_PORT_CPP_SIGRID.md`.
 
-## Estado: Hitos 1–5 completos — screening + OpenMP determinista + layout memory-bound
+## Estado: Hitos 1–6 completos — screening + OpenMP + layout memory-bound + BSPonMPI multi-nodo
+
+> El núcleo del modelo (constantes, structs, RNG, Grid, `Model`, funciones de step,
+> `build_model`) vive ahora en **`sigrid_core.hpp`**, fuente única compartida por la
+> versión OpenMP (`sheep_fox.cpp`) y la versión BSPonMPI multi-nodo
+> (`../mpi-sigrid/`, Hito 6). Para bit-identidad **entre binarios** (serial/OMP/BSP)
+> compilar con `-ffp-contract=off` (ver la cabecera de `sigrid_core.hpp`).
 
 Las cuatro especies (oveja, zorro, perro guardián, liebre, chilla) están
 portadas y validadas contra el oráculo swarm-abm, y la versión paralela (OpenMP)
@@ -305,8 +311,10 @@ El oráculo se construye desde un árbol limpio en HEAD:
 
 ## Próximos hitos
 
-6. **BSPonMPI** (multi-nodo): descomposición de dominio + halo + broadcast de
-   perros; superpasos = ticks (el modelo ya es conservador BSP, ver §9 del plan).
+6. **BSPonMPI** (multi-nodo): ✅ HECHO — ver `../mpi-sigrid/`. Descomposición de
+   dominio + halo + broadcast de perros; superpasos = ticks. Bit-idéntico al
+   oráculo serial/OMP a cualquier P (6/6 configs). Reveló el hallazgo de
+   contracción FP (`-ffp-contract=off`). Escalamiento comm-bound como predijo §9.2.
 7. **(Según decisión de alcance)** subsistemas del Mesa completo (infraestructura,
    estacionalidad, rasters GIS) — ver §7 del plan. Se agregan primero al oráculo.
 
