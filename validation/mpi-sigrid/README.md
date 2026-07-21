@@ -90,11 +90,17 @@ antes de invertir" y advertía que **la descomposición solo paga cuando el áre
 crece hasta que los radios de interacción (halo 500–1200 m) son chicos frente al
 bloque** — a 8 km con P=8 los bloques son de 1 km, del orden del halo. El camino a
 un speedup real es (a) áreas mucho mayores (decenas de km, estancias completas) con
-densidad constante, y/o (b) la **variante event-driven conservadora** que Marín
-encargó estudiar a Manuel (evita el gather global reemplazándolo por mensajes solo
-en los cruces de evento). La bit-identidad —el problema difícil— ya está resuelta;
-el rendimiento multi-nodo es el trabajo siguiente, con el diseño correcto validado
-como base.
+densidad constante, y/o (b) distribuir también la fase B. La bit-identidad —el
+problema difícil— ya está resuelta; el rendimiento multi-nodo es el trabajo
+siguiente, con el diseño correcto validado como base.
+
+Sobre el **encargo de Marín (variante event-driven conservadora)**: ver
+[`EVENT_DRIVEN_STUDY.md`](EVENT_DRIVEN_STUDY.md). Conclusión: el event-driven
+*temporal* (YAWNS estricto) **no conviene** para SIGRID (lookahead = 1 tick por la
+instantánea ⇒ degenera al BSP de Hito 6; y la ociosidad ya está explotada
+intra-tick). La variante conservadora que **sí** paga es la **distribución espacial
+de la fase B** (elimina el gather O(N)), a costa de cambiar bit-identidad-vs-oráculo
+por paridad distribucional.
 
 ## Reproducir
 
