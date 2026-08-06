@@ -1,9 +1,10 @@
-# Estudio: ¿conviene la variante event-driven conservadora para SIGRID?
+# Estudio: ¿conviene una variante event-driven para SIGRID? (conservadora, optimista o aproximada)
 
 Encargo del prof. Marín a Manuel (plan §9.3): *estudiar YAWNS y si conviene la
 variante event-driven conservadora* frente al time-stepped BSP ya implementado
 (Hito 6). Este documento responde con el análisis fundamentado en el código y
-mediciones, y recomienda el camino.
+mediciones, y recomienda el camino. La §6 amplía el alcance más allá del
+conservador (optimista/aproximada) a partir de un aporte de Manuel (ago-2026).
 
 **TL;DR.** Para SIGRID, el event-driven conservador **temporal** (YAWNS estricto)
 **no aporta** speedup: el *lookahead* del modelo es exactamente **1 tick** (por la
@@ -15,6 +16,15 @@ ganancia). La ociosidad que sí existe (26% ovejas, 56% zorros) es **intra-tick*
 **espacial**, no temporal: la fase B centralizada + el gather O(N) por tick. La
 variante conservadora que **sí** conviene es la **distribución espacial de la fase
 B**, que cambia bit-identidad-vs-oráculo por paridad distribucional pero escala.
+
+Ampliando a las otras familias PDES (§6): la equivalencia tiempo↔evento está
+**formalmente respaldada** (los modelos por pasos son un caso particular de DEVS;
+Zeigler §1.5–1.6), así que la pregunta no es *si se puede* sino *si acelera*. La vía
+**optimista** (Time Warp) es poco prometedora para este modelo —la señal global del
+perro dispararía rollbacks frecuentes y en cascada, y el *state-saving* con miles de
+agentes es caro—; la vía **aproximada** coincide con la distribución de la fase B
+(soltar bit-identidad → paridad distribucional). El juez decisivo sigue siendo
+**medir el perfil de cómputo**.
 
 ## 1. YAWNS en una línea, y el lookahead de SIGRID
 
@@ -114,25 +124,90 @@ orden por gid y desempates por gid. Es el trade-off que el plan ya contemplaba p
 la versión distribuida, y el único camino a un speedup multi-nodo real en este
 modelo globalmente-acoplado.
 
-## 6. Recomendación
+## 6. Más allá del conservador: optimista y aproximado
 
-1. **No** invertir en un scheduler event-driven **temporal** (YAWNS estricto): para
-   SIGRID degenera al BSP de Hito 6 (lookahead = 1 tick, sin tiempo vacío) y la
-   ociosidad ya está explotada. Confirmado analítica y empíricamente.
+*Ampliación a partir del aporte de Manuel (ago-2026): la referencia DEVS y la
+observación de que YAWNS es solo la familia **conservadora** — falta evaluar si una
+variante **optimista** o **aproximada** rinde mejor.*
+
+**Base formal (DEVS).** La equivalencia tiempo↔evento está establecida hace décadas:
+los modelos por pasos (DTSS, *Discrete Time System Specification*) son un **subclase
+representable en DEVS**, formalismo planteado como universal para eventos discretos
+(Zeigler, *Theory of Modeling and Simulation*, §1.5–1.6 y Cap. 7). El
+**homomorfismo** de §1.5 es el puente concreto: un **tick es la macrotransición**
+que agrupa las micro-decisiones internas del agente (el "budget"). Conclusión: **la
+posibilidad está zanjada; la pregunta abierta es solo el speedup** — justo lo que
+el prof. Marín anticipaba ("se puede, pero no dice cómo").
+
+Las §§1–5 cubrieron la familia **conservadora** (YAWNS/BSP). PDES tiene otras dos:
+
+**Optimista (Time Warp).** Los procesos avanzan **especulativamente** sin esperar;
+ante un evento que llega "en el pasado" (violación de causalidad) hacen **rollback**.
+No está atado al lookahead → un rank podría correr muchos ticks adelantado y
+retroceder solo en los choques de frontera. Atractivo con lookahead = 1 (el
+conservador está obligado a sincronizar cada tick). Pero para *este* modelo hay tres
+frenos:
+
+1. **Acoplamiento global (la señal del perro).** El territorio del zorro
+   (6135 m > diagonal del mapa) hace que **todo zorro dependa de cualquier perro**, y
+   el perro se mueve cada tick (hasta 3000 m). Un rank adelantado recibiría un
+   "el perro se movió" que afecta a sus zorros **casi cada tick** → rollback casi cada
+   tick → la ventana especulativa colapsa a ~1 tick, sin ganancia sobre el conservador
+   y con el overhead extra. Time Warp gana cuando los eventos cruzados son **raros**;
+   aquí son frecuentes y globales.
+2. **Cascada de rollbacks.** Con acoplamiento global, deshacer una matanza obliga a
+   deshacer lo que otros ranks ya vieron → **rollbacks en cascada**, el modo de falla
+   patológico de Time Warp. El acoplamiento global es exactamente la condición que lo
+   degrada.
+3. **Costo de *state-saving*.** El rollback exige *checkpointing* del estado; con las
+   ovejas dominando (miles), guardar/restaurar es caro en memoria y tiempo — y agrava
+   justo el régimen **memory-bound** que Hito 5 combatió.
+
+*Veredicto optimista:* poco prometedor **as-is**. El mismo acoplamiento global que
+vuelve al conservador comm-bound vuelve al optimista rollback-bound. Solo pagaría si
+la señal del perro se **localizara** o el acoplamiento se raleara — un cambio de
+*modelo*, no de sincronización. Amerita a lo más una estimación de sobre, no un build.
+
+**Aproximado / relajado.** Tolerar errores de causalidad acotados a cambio de
+velocidad (p. ej., usar posiciones de perro con un retardo de ε ticks, o
+sincronización relajada). No es un mecanismo nuevo sino un **objetivo de correctitud
+nuevo**: **coincide con la distribución de la fase B de §5** (soltar la bit-identidad
+→ paridad distribucional). Dicho de otro modo, "PDES aproximado" y "distribuir la
+fase B validando por Pearson ≥ 0.95" son **la misma palanca vista desde dos ángulos**.
+
+**Bottom line:** ninguna de las tres familias cambia el diagnóstico sin datos. El
+paso decisivo sigue siendo **medir el perfil de cómputo/comunicación** (acordado en
+la reunión con Manuel) antes de comprometer un build.
+
+## 7. Recomendación
+
+1. **No** invertir en un scheduler event-driven **temporal conservador** (YAWNS
+   estricto): para SIGRID degenera al BSP de Hito 6 (lookahead = 1 tick, sin tiempo
+   vacío) y la ociosidad ya está explotada. Confirmado analítica y empíricamente.
 2. La variante conservadora que **sí** paga es la **distribución espacial de la
    fase B** (§5): elimina el gather O(N), escala, y se mantiene conservadora (ε = 1
    tick). Trade-off: bit-identidad-vs-oráculo → paridad distribucional (con
    determinismo P-independiente preservable).
-3. El event-driven **temporal** solo valdría la pena si el modelo migrara a un
-   régimen genuinamente ralo en el tiempo (agentes que no actúan por muchos ticks)
-   — no es el caso de SIGRID de screening. Para densidades muy bajas y áreas
-   enormes podría re-evaluarse.
+3. **Optimista (Time Warp): descartar as-is** — el acoplamiento global (señal del
+   perro) hace los rollbacks frecuentes y en cascada (§6). Solo reconsiderar si el
+   modelo localiza esa señal.
+4. **Aproximada: es la misma ruta que (2)** — soltar exactitud coincide con
+   distribuir la fase B por paridad distribucional. No es una vía separada.
+5. **Antes de cualquier build: medir el perfil de cómputo/comunicación** (acuerdo
+   con Manuel). El event-driven temporal solo se re-evaluaría si el modelo migrara a
+   un régimen genuinamente ralo en el tiempo (no es el caso del screening).
 
 ## Referencias
 
 - D. Nicol, *The cost of conservative synchronization in parallel discrete event
   simulations* (YAWNS). J. ACM, 1993.
-- ROSS (Rensselaer's Optimistic Simulation System) implementa YAWNS conservador y
+- D. Jefferson, *Virtual Time* (Time Warp / PDES optimista). ACM TOPLAS, 1985.
+- R. Fujimoto, *Parallel and Distributed Simulation Systems*, 2000 (panorama
+  conservador vs optimista).
+- B. Zeigler, H. Praehofer, T.G. Kim, *Theory of Modeling and Simulation* — Cap. 1,
+  §1.5 (morfismos, homomorfismo modelo↔simulador) y §1.6 (evolución de DEVS; DTSS
+  como subclase). Referencia aportada por Manuel.
+- ROSS (Rensselaer's Optimistic Simulation System): implementa YAWNS conservador y
   Time Warp optimista — referencia de implementación.
 - Plan del port, §9 (`docs/PLAN_PORT_CPP_SIGRID.md`): comunicación uno-a-muchos,
   BSP/YAWNS conservador, y la validación por tendencia.
