@@ -179,6 +179,14 @@ fase B validando por Pearson ≥ 0.95" son **la misma palanca vista desde dos á
 paso decisivo sigue siendo **medir el perfil de cómputo/comunicación** (acordado en
 la reunión con Manuel) antes de comprometer un build.
 
+> **Actualización (ago-2026): el perfil ya se midió** — ver
+> [`docs/PERFIL_COMPUTO.md`](../../docs/PERFIL_COMPUTO.md). Confirma este estudio y
+> zanja la decisión: el modelo es **97–99.7 % paralelizable** (la fase B secuencial
+> pesa ≤ 3.2 % y *baja* al escalar), así que **no hay cuello de sincronización que
+> ningún esquema PDES pueda atacar**. Además, a escala real el screening completo
+> corre en **0.12 s** en serie. Conclusión: sin caso para event-driven en ninguna de
+> sus tres familias; si se escala, **OpenMP en un nodo**.
+
 ## 7. Recomendación
 
 1. **No** invertir en un scheduler event-driven **temporal conservador** (YAWNS
