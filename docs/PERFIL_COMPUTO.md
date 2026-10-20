@@ -11,6 +11,14 @@ nada que paralelizar. Si se escala área o densidad (corridas de ~15 s), la vía
 el multi-nodo pueda atacar, y su costo es comunicación (Hito 6). Esto **confirma con
 datos** la intuición de Manuel: *OpenMP antes que multinodo*.
 
+> ## ⚠️ AVISO — estas mediciones fueron superadas (2026-09-30)
+>
+> Las cifras de §2 y las conclusiones de §3–§4 corresponden al modelo **de agosto
+> 2026**. Al re-medir el 30-sep con el modelo actual (paisaje del miedo, nacimientos
+> y mortalidad de liebres, nueva lógica de selección de presa) **el resultado se
+> invirtió**: la fase secuencial pasó de ≤ 3,2 % a **hasta 89,7 %**. Ver **§7**, que
+> reemplaza a §2–§4. Se conserva lo anterior como registro de la medición original.
+
 ## 1. Método
 
 `validation/cpp-sigrid/profile.cpp` replica el bucle de tick de `run_loss_rate`
@@ -101,3 +109,141 @@ g++ -std=c++17 -O3 -march=native -ffp-contract=off profile.cpp -o profile
 ./profile --width 8000 --height 8000 --days 30 --seed 1000                          # área grande
 ./profile --width 2000 --height 2000 --days 15 --seed 1000 --sheep-density 20       # densidad alta
 ```
+
+---
+
+## 6. Actualización (2026-09-30) — el escenario multi-granja
+
+En la reunión del 2026-09-30 el proyecto se reorientó a simular **muchas granjas**
+(hoy: un predio de 400 ha, ~100 ovejas y ~100 zorros). El paralelismo indicado pasa a
+ser **por granja** — una granja por core o por nodo (propuesta de Verónica Gil) —, que
+es **paralelismo por dominio independiente**, no intra-modelo.
+
+**El problema nuevo es el acoplamiento entre granjas.** Si fueran independientes esto
+sería *embarrassingly parallel*. No lo son: hay **zorros que cruzan** entre granjas y
+**ovejas que traspasan cercos** (con probabilidad calibrada según el ángulo de
+aproximación; más el caso de cerco roto). A diferencia del Hito 6 —donde el
+acoplamiento era *global* (la señal del perro alcanza todo el mapa) y por eso la
+descomposición no pagaba— aquí el acoplamiento es **de frontera y esporádico**, que es
+la condición bajo la cual la descomposición de dominio **sí** rinde.
+
+**Falta medir:** (1) cuántas granjas hay; (2) la **tasa de cruce** de zorros por tick,
+que determina el volumen de comunicación; (3) el **tamaño real por granja** (censo vía
+Ana Justi).
+
+## 7. Re-medición (2026-09-30) — la conclusión se invirtió
+
+Al re-medir con el modelo actual **el diagnóstico cambia por completo**. Dos cosas
+hubo que corregir antes de que los números fueran válidos:
+
+- El modelo incorporó desde agosto el **paisaje del miedo** (`compute_fox_fear`),
+  los **nacimientos y mortalidad de liebres** (fase C) y una **nueva lógica de
+  selección de presa**.
+- **`profile.cpp` estaba desactualizado**: no ejecutaba la fase C, así que las liebres
+  no se reproducían y la dinámica perfilada no era la del modelo. Se corrigió y se le
+  agregó un **control de equivalencia** que imprime `loss_rate`/matadas/intentos para
+  contrastar contra `sheep_fox.cpp` (deben coincidir).
+
+### Resultados (modelo actual, serial, `-ffp-contract=off`)
+
+| Régimen | Serial | `before` | Fase A | B1 | **B2 (sec.)** | Fase C | **Secuencial** | **Paraleliz.** | Amdahl 16h |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| Screening 2×2 km | 0,275 s | 1,7 % | 56,9 % | 11,0 % | **30,1 %** | 0,3 % | **30,4 %** | 69,6 % | **2,9×** |
+| Modelo completo 2×2 km | 1,425 s | 9,8 % | 79,9 % | 6,0 % | 2,5 % | 0,3 % | **4,4 %** | 95,6 % | 9,7× |
+| Densidad alta (20 ov/ha) | 61,9 s | 0,1 % | 28,4 % | 0,2 % | **71,2 %** | 0,0 % | **71,2 %** | 28,8 % | **1,4×** |
+| Área grande 8×8 km | 189,3 s | 0,1 % | 9,6 % | 0,7 % | **89,6 %** | 0,0 % | **89,7 %** | 10,3 % | **1,1×** |
+
+Contraste con agosto: la fracción secuencial pasó de **3,2 % → 30,4 %** (screening),
+**1,8 % → 89,7 %** (área grande) y **0,3 % → 71,2 %** (densidad alta). El costo
+absoluto del área grande subió de **14,8 s a 189,3 s** (12,8×).
+
+### La causa: un bucle O(presas²) en la fase secuencial
+
+En `step_fox`, la selección de presa calcula el **aislamiento** de cada candidata
+contando congéneres a menos de 50 m **recorriendo toda la lista de presas**:
+
+```cpp
+for (int pid : prey) {                 // presas detectadas (radio 300 m)
+    int nearby = 0;
+    for (int qid : prey) { ... if (dist2 < 50*50) nearby++; }   // O(p) dentro de O(p)
+    score += (1.0 - min(nearby/10.0, 1.0)) * FOX_ISOLATED_BONUS;
+}
+```
+
+Es **O(p²) por zorro**, con *p* = presas dentro de 300 m. A densidad alta o área
+grande, *p* crece y el término cuadrático domina — y está en la **fase B2, que es
+secuencial**, así que OpenMP no lo alivia.
+
+### Qué implica
+
+1. **Ahora sí existe un cuello secuencial, y domina al escalar** (hasta 89,7 %). El
+   techo de Amdahl cae a **1,1–1,4×**: agregar hilos casi no sirve en los regímenes
+   grandes.
+2. **Antes de cualquier decisión de paralelismo, conviene atacar el O(p²).** Es
+   probablemente la mejor relación esfuerzo/beneficio del proyecto ahora mismo:
+   - El cálculo de aislamiento es **read-only sobre las presas** ⇒ puede **precomputarse
+     en la fase B1**, que **ya es paralela** (igual que se hizo con `fox_detect` en el
+     Hito 4b).
+   - O reemplazar el bucle anidado por una consulta al **índice espacial** ya existente
+     (el mismo `grid` que usa `fox_detect`), pasando de O(p²) a ~O(p).
+   - Cualquiera de las dos debería devolver la fracción secuencial a valores bajos y
+     **restaurar el techo de Amdahl**.
+3. **Las conclusiones de §4 quedan en suspenso** hasta resolver (2). En particular, el
+   argumento que descartaba distribuir la fase B —"sería un build grande para repartir
+   un 2 % del tiempo"— **ya no aplica**: hoy esa fase pesa hasta 89,7 %. Pero antes de
+   rediseñar arquitectura conviene comprobar cuánto de ese 89,7 % es simplemente el
+   bucle cuadrático.
+
+> **Recomendación:** optimizar el aislamiento (mover a B1 o usar el grid), **re-medir**,
+> y recién entonces revisar si la decisión de arquitectura cambia. No propagar las
+> cifras de §2 a documentos nuevos.
+
+---
+
+## 8. Re-medición tras el fix del O(p²) (2026-10-19) — cuello cuadrático resuelto
+
+Se implementó la recomendación de §7. **Hallazgo que corrige la hipótesis de §7**:
+el conteo de aislamiento **no puede precomputarse en B1**, porque lee el estado
+`alive` **vivo** de las presas, que cambia dentro de B2 a medida que los zorros
+matan. Precomputarlo sobre la instantánea (todas vivas) cambiaría la selección.
+
+El fix queda **dentro de B2** y es bit-idéntico: para listas de >64 presas se
+agrupan las presas del zorro en un hash espacial de 50 m (`thread_local`,
+reutilizado; listo para cuando B2 se paralelice por granja) y cada candidata
+consulta su vecindad 3×3, pasando de O(p²) a O(p·k); para listas chicas se
+conserva el escaneo directo (más barato que armar el índice). Código:
+`sigrid_core.hpp::step_fox`. Hook `-DISO_DIRECT_MAX_OVERRIDE` para rehacer el A/B.
+
+### Verificación de bit-identidad
+
+- A/B directo (= original) vs hash, mismo binario: **6/6 configuraciones
+  byte-idénticas**, incluyendo 20 ov/ha y 8×8 km (donde el hash se ejercita).
+- Golden `serial == OMP(1/4/16)`: **5/5** (`verify_golden_fear.sh`).
+- Métricas de control (`loss_rate`/matadas/intentos) idénticas en todos los brazos.
+
+### A/B limpio de rendimiento (mismo `profile.cpp`, solo cambia `ISO_DIRECT_MAX`)
+
+Densidad alta, 2×2 km, 15 d, 20 ov/ha (8000 ovejas · 34 zorros):
+
+| | O(p²) original | Hash (fix) | |
+|---|---:|---:|---|
+| Total | 44.9 s | **23.5 s** | 1.9× |
+| Fase B2 (zorros) | 31.86 s (71.0%) | **9.73 s (41.4%)** | 3.3× |
+| Fracción secuencial | 71.0% | **41.5%** | |
+| Techo de Amdahl (∞) | 1.4× | **2.4×** | |
+| loss_rate / matadas / intentos | 0.89% / 71 / 542 | 0.89% / 71 / 542 | idéntico ✓ |
+
+### Respuesta a la pregunta abierta de §7
+
+*"¿Cuánto del 89.7% es el bucle cuadrático?"* → depende del régimen:
+
+- **Densidad alta** (p grande, el hash actúa): el O(p²) valía ~30 pp de la
+  fracción secuencial; al quitarlo, el techo de Amdahl sube de 1.4× a 2.4×.
+- **Área grande, baja densidad** (8×8 km, p≈27 < 64, camino directo): el O(p²)
+  **no** era el driver; B2 sigue alto (~69%) por otro costo por-zorro. El fix no
+  lo toca (correctamente); queda como follow-up si ese régimen pasa a importar.
+
+**Implicación:** en los regímenes de alta densidad la fracción secuencial deja de
+estar dominada por el aislamiento, así que este cuello ya no sesga la decisión de
+arquitectura (BSP multi-granja). El siguiente candidato de optimización es el
+costo por-zorro residual de B2 en baja densidad.

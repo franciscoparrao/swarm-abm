@@ -40,7 +40,7 @@ int main(int argc, char** argv) {
 
     std::vector<std::vector<int>> fdprey(m.agents.size());
     std::vector<int> fdhares(m.agents.size(), 0);
-    double t_before=0, t_A=0, t_B1=0, t_B2fox=0, t_B2dog=0, t_term=0;
+    double t_before=0, t_A=0, t_B1=0, t_B2fox=0, t_B2dog=0, t_C=0, t_term=0;
     long ticks=0;
 
     for (uint64_t step = 0; step < days * 24; ++step) {
@@ -82,16 +82,21 @@ int main(int argc, char** argv) {
         }
         auto t4 = clk::now();
 
+        // Fase C (secuencial): nacimientos de liebres + mortalidad denso-dependiente
+        if (hare_births(m, phaseA) > 0) { fdprey.resize(m.agents.size()); fdhares.resize(m.agents.size(), 0); }
+        if (step % 24 == 0) hare_cull(m);
+        auto t4c = clk::now(); t_C += secs(t4, t4c);
+
         bool any_sheep = false; for (auto& a : m.agents) if (a.alive && a.species == SHEEP) { any_sheep = true; break; }
-        t_term += secs(t4, clk::now());
+        t_term += secs(t4c, clk::now());
         ticks++;
         if (!any_sheep) break;
     }
 
     double t_B2 = t_B2fox + t_B2dog;
-    double total = t_before + t_A + t_B1 + t_B2 + t_term;
+    double total = t_before + t_A + t_B1 + t_B2 + t_C + t_term;
     double par = t_before + t_A + t_B1;        // paralelizable
-    double seq = t_B2 + t_term;                 // secuencial (Amdahl)
+    double seq = t_B2 + t_C + t_term;           // secuencial (Amdahl)
     double f_seq = seq / total;
     double amdahl_inf = 1.0 / f_seq;            // techo de speedup con ∞ hilos
 
@@ -106,10 +111,15 @@ int main(int argc, char** argv) {
     row("fase B1 (fox_detect)",   t_B1);
     row("fase B2 zorros",          t_B2fox);
     row("fase B2 perros",          t_B2dog);
+    row("fase C (liebres nac/cull)", t_C);
     row("término (conteo ovejas)", t_term);
     printf("\n  PARALELIZABLE (before+A+B1)  %8.3f s   %5.1f%%\n", par, 100.0*par/total);
-    printf("  SECUENCIAL   (B2+término)    %8.3f s   %5.1f%%\n", seq, 100.0*seq/total);
+    printf("  SECUENCIAL   (B2+C+término)  %8.3f s   %5.1f%%\n", seq, 100.0*seq/total);
     printf("\n  Techo de Amdahl (∞ hilos): %.1fx   |  a 16 hilos: %.1fx\n",
            amdahl_inf, 1.0/(f_seq + (1.0-f_seq)/16.0));
+    // Control de equivalencia: debe coincidir con sheep_fox.cpp a igual config/semilla.
+    printf("\n  [control] loss_rate %.2f%% | matadas %ld | intentos %ld\n",
+           (double)m.sheep_killed / std::max(1, m.n_sheep_initial) * 100.0,
+           m.sheep_killed, m.predation_attempts);
     return 0;
 }

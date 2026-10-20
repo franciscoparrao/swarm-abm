@@ -48,10 +48,21 @@ static double run_loss_rate(const Params& params, uint64_t seed, uint64_t n_days
         for (int idx : phaseB) { if (!m.agents[idx].alive) continue;
             PRng r(agent_seed(seed, step, (uint64_t)idx));
             if (m.agents[idx].species == FOX) step_fox(m, idx, r, fdprey[idx], fdhares[idx]); else step_dog(m, idx); }
+        // Fase C (secuencial): nacimientos de liebres decididos en la fase A y
+        // mortalidad denso-dependiente una vez al día, como en model_v2.step().
+        if (hare_births(m, phaseA) > 0) { fdprey.resize(m.agents.size()); fdhares.resize(m.agents.size(), 0); }
+        if (step % 24 == 0) hare_cull(m);
         // término anticipado si no quedan ovejas
         bool any_sheep = false; for (auto& a : m.agents) if (a.alive && a.species == SHEEP) { any_sheep = true; break; }
         if (!any_sheep) break;
     }
+    if (getenv("SIGRID_DIAG")) {
+        long nh = 0, ns = 0; double hare_e = 0;
+        for (auto& a : m.agents) { if (!a.alive) continue;
+            if (a.species == HARE) { nh++; hare_e += a.energy; }
+            if (a.species == SHEEP) ns++; }
+        const double area_ha = (m.params.width * m.params.height) / 10000.0;
+        fprintf(stderr, "  [dog] persecuciones %ld | rastro %ld | arreo %ld\n", m.n_chase, m.n_trail, m.n_herd);    }
     killed = m.sheep_killed; attempts = m.predation_attempts;
     return (double)m.sheep_killed / std::max(1, m.n_sheep_initial) * 100.0;
 }
@@ -67,6 +78,7 @@ int main(int argc, char** argv) {
     p.chilla_density = darg("--chilla-density", p.chilla_density);
     p.hare_density = darg("--hare-density", p.hare_density);
     p.n_dogs = (int)darg("--dogs", p.n_dogs);
+    set_switch_lambda(darg("--switch-lambda", 1.0));  // fuerza del prey switching
     p.width = darg("--width", p.width);   // escalar el AREA a densidad constante
     p.height = darg("--height", p.height); // -> muchos agentes, pocos vecinos/query
 

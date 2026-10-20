@@ -12,6 +12,7 @@
 #include <vector>
 #include <random>
 #include <algorithm>
+#include <unordered_map>
 #ifdef _OPENMP
 #include <omp.h>
 #endif
@@ -33,7 +34,7 @@ static const double SPACE_CELL = 60.0;  // celda del índice espacial
 static const double TAU = 6.283185307179586;
 static const double SHEEP_SPEED = 50.0, SHEEP_FLEE_SPEED = 100.0, SHEEP_PERCEPTION_RADIUS = 100.0, SHEEP_ADULT_VULN = 0.4;
 static const double LAMB_SPEED = 35.0, LAMB_FLEE_SPEED = 60.0, LAMB_PERCEPTION_RADIUS = 50.0, LAMB_FEAR_DECAY = 0.05;
-static const double LAMB_MATURATION_DAYS = 120.0, LAMB_VULN = 0.85;
+static const double LAMB_MATURATION_DAYS = 120.0, LAMB_VULN = 0.8;
 static const double FOX_SPEED_WALK = 500.0, FOX_DETECTION_RADIUS = 300.0, FOX_TERRITORY_RADIUS = 6135.0;
 static const double HUNGER_THRESHOLD = 0.3, BASE_RISK_AVERSION = 0.6, FOX_ATTACK_RADIUS = 50.0;
 static const double FOX_ACT_PEAK_ND = 0.0, FOX_ACT_AMP_ND = 0.90, FOX_ACT_SIGMA_ND = 4.5, FOX_ACT_BASE_ND = 0.05; // sin perro
@@ -50,9 +51,133 @@ static const double HARE_SPEED_NORMAL = 100.0, HARE_SPEED_FLEE = 800.0, HARE_PER
 static const double HARE_MATURITY_AGE_H = 60.0 * 24.0, HARE_VULN_JUV = 0.9, HARE_VULN_MATURE = 0.6;
 static const double CHILLA_TERRITORY_RADIUS = 4295.0;
 
+// ---------------------------------------------------------------------------
+// Dinámica poblacional de la liebre (port del Python, agents/hare.py).
+// El C++ colocaba las liebres al inicio y sólo las quitaba por depredación, de
+// modo que la población se agotaba durante la corrida, el switching perdía
+// fuerza y los zorros pasaban a las ovejas. El Python las reproduce y las poda
+// hacia una capacidad de carga, así que la densidad INICIAL es una condición
+// inicial y no un tratamiento sostenido.
+static const double HARE_REPRODUCTION_RATE   = 0.02;   // prob. por paso (hora)
+static const double HARE_CARRYING_CAPACITY   = 0.35;   // liebres/ha
+static const double HARE_REPRO_ENERGY_MIN    = 70.0;
+static const double HARE_REPRO_DAYS_MIN      = 30.0;
+static const double HARE_REPRO_FEAR_MAX      = 0.3;
+static const double HARE_REPRO_COST          = 20.0;
+static const double HARE_LOCAL_RADIUS        = 500.0;  // radio de densidad local
+static const double HARE_FORAGE_GAIN         = 1.5;    // × calidad de pastizal
+static const double HARE_UPKEEP              = 0.5;    // + fear × 1.5
+static const int    HARE_MAX_OFFSPRING       = 4;      // randint(2,5) -> 2..4
+
+// ---------------------------------------------------------------------------
+// A1 — presupuesto energético (port del Python, agents/fox.py, 2026-08-12).
+// La saciedad escala con la biomasa APROVECHABLE de la presa. Antes de esta
+// corrección el modelo hacía `hunger = 0` tras cualquier captura, de modo que
+// una liebre de 4 kg y una oveja de 40 kg saciaban igual y el consumo per
+// cápita subía a varias veces el requerimiento de mantención.
+// φ (fracción aprovechable) cae con el tamaño porque lo que limita el uso de
+// una carcasa grande no es su masa sino la ventana de 2-5 días antes de que
+// la descomposición y los carroñeros la retiren.
+static const double PREY_MASS_HARE = 4.0,  PREY_USABLE_HARE  = 0.85;
+static const double PREY_MASS_LAMB = 8.0,  PREY_USABLE_LAMB  = 0.50;
+static const double PREY_MASS_EWE  = 40.0, PREY_USABLE_EWE   = 0.10;
+static const int    STEPS_PER_DAY  = 24;               // pasos de 1 hora
+static const double HUNGER_RATE_PER_STEP = 0.01;
+static const double HUNGER_RATE_PER_DAY  = HUNGER_RATE_PER_STEP * STEPS_PER_DAY; // 0.24
+static const double FOX_DAILY_INTAKE_KG    = 0.45;     // culpeo
+static const double CHILLA_DAILY_INTAKE_KG = 0.22;     // chilla (~3 kg)
+static const double SATIATION_FLOOR = -15.0;           // crédito energético acotado
+
+// A2 — preferencia saturante por presa silvestre (port del Python).
+// Reemplaza los escalones codificados a mano (+0.4 liebre / +0.2 si >=3 /
+// -0.3 oveja si >=2), cuya magnitud nunca apareció en el manuscrito ni se
+// barrió. Ahora es un par de parámetros explícitos y una función saturante.
+// No son const: el manuscrito calibra la FUERZA del switching como un escalar
+// lambda sobre ambos betas (lambda = 1.0 reproduce los defaults del Python).
+// La celda calibrada del paper es lambda ~ 0.20-0.27.
+static double PREY_SWITCH_BETA_HARE  = 1.2;
+static double PREY_SWITCH_BETA_SHEEP = 0.6;
+static double PREY_SWITCH_N_HALF     = 3.0;
+// Términos del score de selección que faltaban en el port. El de aislamiento
+// es el decisivo: la oveja va en majada (nearby alto -> bonus ~0) y la liebre
+// anda dispersa (nearby ~0 -> bonus ~0.3), lo que invierte el ranking entre
+// cordero y liebre en el punto de operación calibrado.
+static const double FOX_ISOLATED_BONUS      = 0.3;
+// Índice de aislamiento: la celda es de 50 m (= el radio de conteo), y por debajo
+// de ISO_DIRECT_MAX presas el escaneo directo O(p²) es más barato que armar el hash.
+static const double ISO_CELL        = 50.0;
+#ifdef ISO_DIRECT_MAX_OVERRIDE
+static const size_t ISO_DIRECT_MAX  = ISO_DIRECT_MAX_OVERRIDE;  // para el A/B de bit-identidad
+#else
+static const size_t ISO_DIRECT_MAX  = 64;
+#endif
+static const double FOX_FAR_FROM_DOG_BONUS  = 0.3;
+static const double FOX_SUCCESS_ZONE_BONUS  = 0.2;
+// Gate logístico de aborto (port del Python). El corte duro
+// `if (risk > risk_aversion)` hacía que un incremento de riesgo que no cruza
+// el umbral no cambiara nada; con el gate, la probabilidad de abortar sube
+// suavemente alrededor de la aversión.
+static const double RISK_ABORT_SHARPNESS = 10.0;
+// Perro: comportamientos que faltaban en el port. El orden de prioridad del
+// Python es reactivo: amenaza > rastro olfativo > arreo de dispersas > patrulla.
+// El arreo importa: la bitácora del proyecto documenta que el fallo de "un
+// perro empeora" no venía de la tasa de intentos sino de la letalidad sobre
+// stragglers que un solo perro no mantiene agrupados.
+static const double DOG_TRAIL_RADIUS      = 1500.0;   // radio olfativo
+static const uint64_t DOG_TRAIL_TTL_HOURS = 2;        // 1 paso = 1 hora
+static const double DOG_SCATTERED_THRESHOLD = 150.0;  // distancia al centro
+// Toggle de fidelidad: si SIGRID_NO_STALK está definido, el zorro mata al
+// contacto (como el Python) en vez de acechar cuando hay un perro cerca.
+static const bool FOX_NO_STALK = (std::getenv("SIGRID_NO_STALK") != nullptr);
+// Si SIGRID_FAITHFUL_DETER está definido, la disuasión del perro sólo agrega una
+// zona peligrosa (como dog.chase del Python), sin resetear hunger/fear del zorro.
+static const bool DOG_FAITHFUL_DETER = (std::getenv("SIGRID_FAITHFUL_DETER") != nullptr);
+
+// ---------------------------------------------------------------------------
+// Paisaje del miedo perro->zorro (port del Python, agents/fox.py::evaluate_risk
+// + behavior/landscape_of_fear.py::FoxFearLandscape). Era el bloque que faltaba
+// para que el efecto del LGD coincidiera con el Python (medido 30.9 % C++ vs
+// 42.1 % Python): sin el paisaje del miedo y con el zorro percibiendo al perro
+// solo a DOG_AVOID_RADIUS=500 m, la disuasión del perro quedaba subrepresentada.
+//
+// La `evaluate_risk` del Python suma en la pathway del perro tres términos que
+// aquí faltaban, todos escalados por dog_risk_multiplier (1.0 culpeo / 1.8
+// chilla):
+//   (1) proximidad al perro más cercano dentro de FOX_DOG_DETECTION_RADIUS
+//       (1500 m, no 500): (1 - d/1500) * DOG_PROXIMITY_RISK_WEIGHT
+//   (2) piso ambiental DOG_AMBIENT_RISK si hay perros pero ninguno en rango
+//       (ningún punto del mapa es un santuario absoluto — estabiliza colas)
+//   (3) paisaje del miedo (capa espacial acumulada): fear(x,y) * DOG_FEAR_LANDSCAPE_WEIGHT
+// Con params.n_dogs == 0 los tres términos son EXACTAMENTE cero, así que este
+// bloque no altera el brazo "sin perro" (nivel base ya en paridad).
+static const double FOX_DOG_DETECTION_RADIUS = 1500.0;  // radio de percepción del perro (era 500)
+static const double DOG_PROXIMITY_RISK_WEIGHT = 0.7;
+static const double DOG_FEAR_LANDSCAPE_WEIGHT = 0.7;
+static const double DOG_AMBIENT_RISK          = 0.08;
+static const double CHILLA_DOG_RISK_MULTIPLIER = 1.8;   // dog_risk_multiplier de la chilla
+// FoxFearLandscape: el perro intimida al zorro en un radio de 600 m con caída
+// gaussiana (sigma = radio*0.4). intensidad ≡ 1.0 (is_patrolling/is_alerted no
+// existen en el código Python) e historical_fear ≡ 0 (los eventos
+// dog_deterrence/dog_attack_fox nunca se generan), así que el paisaje se reduce
+// a: fear_map = max_perros exp(-0.5 (d/(600*0.4))^2), combined = 0.6*fear_map,
+// luego un suavizado gaussiano (scipy.ndimage.gaussian_filter, sigma=1).
+static const double FOX_FEAR_INTENSITY   = 1.0;     // is_patrolling/is_alerted no existen -> ≡ 1.0
+static const double FOX_FEAR_RADIUS      = 600.0;   // radio de miedo del perro sobre el zorro
+static const double FOX_FEAR_SIGMA_FRAC  = 0.4;     // sigma espacial = radio * frac
+static const double FOX_FEAR_COMBINE_W   = 0.6;     // peso de fear_map en combined_risk
+static const double FOX_FEAR_GF_SIGMA    = 1.0;     // sigma (en celdas) del gaussian_filter
+static const int    FOX_FEAR_GF_RADIUS   = 4;       // int(truncate*sigma+0.5), truncate=4
+
+static inline void set_switch_lambda(double lam) {
+    PREY_SWITCH_BETA_HARE  = 1.2 * lam;
+    PREY_SWITCH_BETA_SHEEP = 0.6 * lam;
+}
+
 enum Species { SHEEP = 0, FOX = 1, DOG = 2, HARE = 3 };
 
-struct DangerZone { double x, y; uint64_t step; };
+// intensity: riesgo con que se registró la zona (Python: add_dangerous_zone
+// guarda intensity=risk y evaluate_risk/select_target la usan como intensity*0.3).
+struct DangerZone { double x, y; uint64_t step; double intensity = 1.0; };
 
 struct Animal {
     int species; double x, y; bool alive; double energy, age_days, fear;
@@ -63,7 +188,30 @@ struct Animal {
     std::vector<DangerZone> danger_zones; int stalk_target = -1;
     // perro: patrullaje circular
     double patrol_angle = 0.0, patrol_cx = 0.0, patrol_cy = 0.0;
+    // liebre: reproducción. La decisión (cuántas crías y dónde) se toma en la
+    // fase A paralela con el RNG por-agente y se MATERIALIZA en una fase
+    // secuencial posterior: así el resultado no depende del orden de hilos y
+    // ningún hilo escribe en el vector de agentes.
+    double days_since_repro = 0.0;
+    int pending_offspring = 0;
+    double off_x[HARE_MAX_OFFSPRING] = {0,0,0,0}, off_y[HARE_MAX_OFFSPRING] = {0,0,0,0};
 };
+
+// Biomasa aprovechable (kg) de una presa, según su tipo.
+static inline double prey_usable_kg(const Animal& prey) {
+    if (prey.species == HARE) return PREY_MASS_HARE * PREY_USABLE_HARE;
+    if (prey.is_lamb)         return PREY_MASS_LAMB * PREY_USABLE_LAMB;
+    return PREY_MASS_EWE * PREY_USABLE_EWE;   // adulta: la categoría conservadora
+}
+
+// Consume la presa y reduce el déficit en proporción a la biomasa asimilable.
+// Una unidad de hambre equivale a `daily_intake` kg de presa.
+static inline void feed_on(Animal& fox, const Animal& prey) {
+    const double usable_kg = prey_usable_kg(prey);
+    const double daily_intake = fox.is_chilla ? CHILLA_DAILY_INTAKE_KG : FOX_DAILY_INTAKE_KG;
+    const double hunger_units = usable_kg * (HUNGER_RATE_PER_DAY / daily_intake);
+    fox.hunger = std::max(SATIATION_FLOOR, fox.hunger - hunger_units);
+}
 
 struct Snap { double x, y; int species; bool alive, is_lamb; double vulnerability, energy; int mother; };
 // Layout SoA para la instantánea (Hito 5): coords calientes separadas de los
@@ -255,12 +403,83 @@ static void build_rasters(double W, double H, Rng& rng, Raster& quality, Raster&
     }
 }
 
+// ---------------------------------------------------------------------------
+// Suavizado gaussiano separable equivalente a scipy.ndimage.gaussian_filter con
+// sigma=1, truncate=4 (radio=4) y mode='reflect' (borde half-sample: el índice
+// -1 mapea a 0, -2 a 1, ...; n mapea a n-1, etc.). Se aplica primero sobre el
+// eje 0 (filas) y luego sobre el eje 1 (columnas), como hace scipy. El kernel es
+// el de scipy _gaussian_kernel1d: phi(k)=exp(-0.5 k^2/sigma^2) normalizado en
+// [-radio, radio]. No hace falta bit-identidad con Python (la validación C++ vs
+// Python es distribucional), pero reproducir el kernel y el borde exactos evita
+// introducir un desalineamiento numérico gratuito en el campo de miedo.
+static void gaussian_blur_reflect(std::vector<double>& img, int cols, int rows) {
+    const int R = FOX_FEAR_GF_RADIUS;
+    const double sig = FOX_FEAR_GF_SIGMA, sig2 = sig * sig;
+    double w[2 * FOX_FEAR_GF_RADIUS + 1]; double wsum = 0.0;
+    for (int k = -R; k <= R; ++k) { double v = std::exp(-0.5 * (double)(k * k) / sig2); w[k + R] = v; wsum += v; }
+    for (int k = 0; k < 2 * R + 1; ++k) w[k] /= wsum;
+    auto reflect = [](int i, int n) { // borde 'reflect' de scipy (half-sample)
+        if (n == 1) return 0;
+        while (i < 0 || i >= n) { if (i < 0) i = -i - 1; if (i >= n) i = 2 * n - i - 1; }
+        return i;
+    };
+    std::vector<double> tmp(img.size());
+    // eje 0: filas (columna fija, se recorre la fila r+k)
+    for (int c = 0; c < cols; ++c) for (int r = 0; r < rows; ++r) {
+        double acc = 0.0;
+        for (int k = -R; k <= R; ++k) { int rr = reflect(r + k, rows); acc += w[k + R] * img[(size_t)rr * cols + c]; }
+        tmp[(size_t)r * cols + c] = acc;
+    }
+    // eje 1: columnas (fila fija, se recorre la columna c+k)
+    for (int r = 0; r < rows; ++r) for (int c = 0; c < cols; ++c) {
+        double acc = 0.0;
+        for (int k = -R; k <= R; ++k) { int cc = reflect(c + k, cols); acc += w[k + R] * tmp[(size_t)r * cols + cc]; }
+        img[(size_t)r * cols + c] = acc;
+    }
+}
+
+// Recalcula el paisaje del miedo perro->zorro (FoxFearLandscape) desde las
+// posiciones de perros al inicio del tick. `fear` ya viene dimensionado como los
+// rasters de vegetación (mismos cols/rows/height/CELL_SIZE). Convención de
+// celda idéntica a Raster::get y a _pos_to_grid del Python: col=x/CELL_SIZE,
+// row=(height-y)/CELL_SIZE.
+static void compute_fox_fear(Raster& fear, const std::vector<std::pair<double,double>>& dogs) {
+    const int cols = fear.cols, rows = fear.rows; const double H = fear.height;
+    std::fill(fear.data.begin(), fear.data.end(), 0.0);
+    if (dogs.empty()) return;   // sin perros el campo es cero (no toca el brazo sin perro)
+    const double denom = FOX_FEAR_RADIUS * FOX_FEAR_SIGMA_FRAC;   // 240
+    const int rc = (int)(FOX_FEAR_RADIUS / CELL_SIZE);            // int(600/30)=20
+    // fear_map[r,c] = max sobre perros de intensidad * exp(-0.5 (dist/denom)^2), dist<radio
+    for (const auto& d : dogs) {
+        int col = (int)std::floor(d.first / CELL_SIZE);
+        int row = (int)std::floor((H - d.second) / CELL_SIZE);
+        for (int i = -rc; i <= rc; ++i) for (int j = -rc; j <= rc; ++j) {
+            int r = row + i, c = col + j;
+            if (r < 0 || r >= rows || c < 0 || c >= cols) continue;
+            double dist = std::sqrt((double)(i * i + j * j)) * CELL_SIZE;
+            if (dist >= FOX_FEAR_RADIUS) continue;
+            double fv = FOX_FEAR_INTENSITY * std::exp(-0.5 * (dist / denom) * (dist / denom));
+            size_t idx = (size_t)r * cols + c;
+            if (fv > fear.data[idx]) fear.data[idx] = fv;
+        }
+    }
+    // combined_risk = clip(0.6*fear_map, 0, 1); como 0.6*fear ∈ [0,0.6], el clip
+    // es identidad. Luego el suavizado gaussiano (historical_fear ≡ 0 -> se omite).
+    for (double& v : fear.data) v = FOX_FEAR_COMBINE_W * v;
+    gaussian_blur_reflect(fear.data, cols, rows);
+}
+
 struct Model {
     std::vector<Animal> agents; Grid grid;
     Raster veg_quality, veg_cover; Params params;
     std::vector<std::pair<double,double>> dog_positions;
+    Raster fox_fear;   // paisaje del miedo perro->zorro (combined_risk suavizado)
     int current_hour = 0; uint64_t step_count = 0;
-    long sheep_killed = 0, predation_attempts = 0; int n_sheep_initial = 0;
+    long sheep_killed = 0, hares_killed = 0, predation_attempts = 0, att_sheep = 0, att_hare = 0;
+    // Rastro olfativo: posición y paso de los eventos de depredación recientes.
+    struct TrailEvent { double x, y; uint64_t step; };
+    long n_trail = 0, n_herd = 0, n_chase = 0;
+    std::vector<TrailEvent> trail; int n_sheep_initial = 0;
 
     void before_step() {
         current_hour = (int)(step_count % 24); step_count++;
@@ -269,7 +488,18 @@ struct Model {
             const Animal& a = agents[i];
             if (a.alive && a.species == DOG) dog_positions.push_back({a.x, a.y});
         }
+        // Paisaje del miedo del zorro: recomputado aquí (serial, antes de las
+        // fases de agentes) desde las posiciones de perros de inicio de tick.
+        // Read-only durante las fases A/B -> no afecta la bit-identidad
+        // serial == OpenMP. Con dog_positions vacío queda en cero.
+        compute_fox_fear(fox_fear, dog_positions);
         grid.build(agents, params.width, params.height);
+    }
+
+    // Riesgo percibido por el zorro (paisaje del miedo perro->zorro) en (px,py).
+    double fox_perceived_risk(double px, double py) const {
+        if (dog_positions.empty()) return 0.0;   // get_fox_perceived_risk -> 0.0 sin perros
+        return fox_fear.get(px, py);
     }
 
     // nearest_dog_dist: menor distancia a un perro dentro de `max`, o -1 si ninguno.
@@ -280,6 +510,17 @@ struct Model {
             if (dd <= max && (best < 0 || dd < best)) best = dd;
         }
         return best;
+    }
+
+    // nearest_dog_pos: posición del perro más cercano dentro de `max`; devuelve
+    // false si no hay ninguno. Usado por avoid_and_search (huir del perro).
+    bool nearest_dog_pos(double px, double py, double max, double& ox, double& oy) const {
+        double best = -1.0; bool found = false;
+        for (auto& d : dog_positions) {
+            double dd = std::sqrt((px - d.first) * (px - d.first) + (py - d.second) * (py - d.second));
+            if (dd <= max && (best < 0 || dd < best)) { best = dd; ox = d.first; oy = d.second; found = true; }
+        }
+        return found;
     }
 };
 
@@ -326,7 +567,13 @@ static void step_sheep(Model& m, int i, PRng& rng) {
                 if (sn.species == SHEEP && d <= SHEEP_PERCEPTION_RADIUS) { cx += sn.x; cy += sn.y; n += 1; }
                 if (sn.species == DOG && d < dog_best) { dog_best = d; dgx = sn.x; dgy = sn.y; } });
             double vcx = 0, vcy = 0;
-            if (n > 0) { vcx = cx / n - s.x; vcy = cy / n - s.y; norm(vcx, vcy); }
+            // NO normalizar: en el Python get_flocking_vectors() devuelve el vector
+            // COMPLETO hacia el centro del grupo, cuya magnitud es la distancia al
+            // centro. Con peso 0.2 eso domina a los demas terminos (unitarios), y es
+            // lo que mantiene la majada compacta. Normalizarlo la dispersaba, y una
+            // majada dispersa deja de proteger: m_group cae, el cordero se separa de
+            // la madre (m_mother deja de aplicar) y sube el bonus de aislamiento.
+            if (n > 0) { vcx = cx / n - s.x; vcy = cy / n - s.y; }
             double vdx = 0, vdy = 0;
             if (dog_best < 500.0) { vdx = dgx - s.x; vdy = dgy - s.y; norm(vdx, vdy); }
             double dx = vfx * 0.3 + vrx * 0.2 + vcx * 0.2 + vdx * 0.3 + rng.normal(0.1);
@@ -362,9 +609,13 @@ static double predation_probability(Model& m, int fox_i, int prey_i) {
 static void attempt_predation(Model& m, int fox_i, int prey_i, PRng& rng) {
     double p = predation_probability(m, fox_i, prey_i);
     m.predation_attempts++;
+    if (m.agents[prey_i].species == SHEEP) m.att_sheep++; else if (m.agents[prey_i].species == HARE) m.att_hare++;
+    m.trail.push_back({m.agents[prey_i].x, m.agents[prey_i].y, m.step_count});
     bool success = rng.unit() < p;
-    if (success) { m.agents[prey_i].alive = false; m.agents[fox_i].hunger = 0.0;
-        if (m.agents[prey_i].species == SHEEP) m.sheep_killed++; }
+    if (success) { m.agents[prey_i].alive = false;
+        feed_on(m.agents[fox_i], m.agents[prey_i]);   // A1: saciedad por biomasa
+        if (m.agents[prey_i].species == SHEEP) m.sheep_killed++;
+        else if (m.agents[prey_i].species == HARE) m.hares_killed++; }
     else { m.agents[prey_i].fear = 1.0; m.agents[fox_i].hunger = std::min(m.agents[fox_i].hunger + 0.05, 1.0); }
 }
 
@@ -391,6 +642,79 @@ static void fox_detect(const Model& m, double fx, double fy, std::vector<int>& p
     }
 }
 
+// Riesgo percibido por el zorro al cazar una presa en (tx,ty) — PORT FIEL de
+// Fox.evaluate_risk (agents/fox.py). Nota de estructura: el término de
+// PROXIMIDAD al perro usa la distancia ZORRO->perro (self en el Python), mientras
+// que el PAISAJE DEL MIEDO y las ZONAS PELIGROSAS se evalúan en la PRESA. Se
+// omiten cobertura vegetal (≈0 frente a la aversión 0.6, no dispara el aborto en
+// el brazo sin perro donde ya hay paridad) e infraestructura (no existe en el C++).
+static double fox_evaluate_risk(const Model& m, const Animal& f, double tx, double ty) {
+    const double mult = f.is_chilla ? CHILLA_DOG_RISK_MULTIPLIER : 1.0; // dog_risk_multiplier
+    double risk = 0.0;
+    // (1) proximidad al perro más cercano dentro de 1500 m (distancia zorro->perro);
+    //     (2) si no hay perro en rango pero existen perros, piso ambiental.
+    double dnd = m.nearest_dog_dist(f.x, f.y, FOX_DOG_DETECTION_RADIUS);
+    if (dnd >= 0.0)
+        risk += (1.0 - dnd / FOX_DOG_DETECTION_RADIUS) * DOG_PROXIMITY_RISK_WEIGHT * mult;
+    else if (!m.dog_positions.empty())
+        risk += DOG_AMBIENT_RISK * mult;
+    // (3) paisaje del miedo perro->zorro en la posición de la PRESA.
+    risk += m.fox_perceived_risk(tx, ty) * DOG_FEAR_LANDSCAPE_WEIGHT * mult;
+    // memoria propia de zonas peligrosas: distancia PRESA->zona (<500 -> +intensity*0.3).
+    for (auto& z : f.danger_zones) {
+        double ddx = tx - z.x, ddy = ty - z.y;
+        if (std::sqrt(ddx * ddx + ddy * ddy) < 500.0) risk += z.intensity * 0.3;
+    }
+    // (Python evaluate_risk añade dos términos dog-independientes que aquí se
+    //  omiten: cobertura vegetal (1-cover)*0.2 e infraestructura +0.3. La
+    //  infraestructura no existe en el C++. La cobertura, al probarla, EMPEORÓ la
+    //  paridad del efecto del perro: como el brazo con-perro ya opera cerca del
+    //  umbral de aborto, un término dog-independiente lo cruza de forma
+    //  desproporcionada y sobre-suprime. Se deja fuera; el gap residual apunta a
+    //  divergencias del modelo de perro (p.ej. la disuasión del C++ resetea
+    //  hunger=0/fear=1, que el Python no hace), no a este término.)
+    return std::min(1.0, risk);
+}
+
+// Dirección (8 rumbos) de menor riesgo del paisaje del miedo alrededor de (px,py)
+// a distancia search_r — PORT de FearLandscapeBase.get_safest_direction. Devuelve
+// false si ninguna dirección mejora el riesgo actual (entonces no hay sesgo). Fuera
+// del dominio el riesgo percibido es 1.0 (como get_perceived_risk del Python).
+static bool fox_safest_direction(const Model& m, double px, double py, double search_r,
+                                 double& bdx, double& bdy) {
+    auto risk_at = [&](double x, double y) -> double {
+        if (x < 0 || x >= m.params.width || y < 0 || y >= m.params.height) return 1.0;
+        return m.fox_perceived_risk(x, y);
+    };
+    double best_risk = risk_at(px, py); bdx = 0.0; bdy = 0.0; bool found = false;
+    for (int k = 0; k < 8; ++k) {           // linspace(0, 2pi, 8, endpoint=False)
+        double ang = TAU * (double)k / 8.0, dx = std::cos(ang), dy = std::sin(ang);
+        double r = risk_at(px + dx * search_r, py + dy * search_r);
+        if (r < best_risk) { best_risk = r; bdx = dx; bdy = dy; found = true; }
+    }
+    return found;
+}
+
+// Búsqueda activa de presas — PORT de Fox.search_for_prey. Rumbo al azar, salvo
+// que haya una zona peligrosa a <300 m (huye de ella) y/o sesgo 60/40 hacia la
+// dirección más segura del paisaje del miedo. Sólo se mueve si el destino es
+// válido (dominio cerrado, como is_valid_position del Python — no clampea).
+static void fox_search_for_prey(Model& m, Animal& f, PRng& rng) {
+    double angle = rng.range(0.0, TAU);
+    for (auto& z : f.danger_zones) {
+        double dx = f.x - z.x, dy = f.y - z.y;
+        if (std::sqrt(dx * dx + dy * dy) < 300.0) { angle = std::atan2(dy, dx); break; }
+    }
+    double sdx, sdy;
+    if (fox_safest_direction(m, f.x, f.y, FOX_SPEED_WALK, sdx, sdy)) {
+        double cdx = std::cos(angle), cdy = std::sin(angle);
+        double mdx = 0.6 * sdx + 0.4 * cdx, mdy = 0.6 * sdy + 0.4 * cdy;
+        angle = std::atan2(mdy, mdx);
+    }
+    double nx = f.x + std::cos(angle) * FOX_SPEED_WALK, ny = f.y + std::sin(angle) * FOX_SPEED_WALK;
+    if (nx >= 0 && nx < m.params.width && ny >= 0 && ny < m.params.height) { f.x = nx; f.y = ny; }
+}
+
 static void step_fox(Model& m, int i, PRng& rng, const std::vector<int>& prey, int hares_nearby) {
     Animal& f = m.agents[i];
     f.hunger = std::min(f.hunger + 0.01, 1.0);
@@ -409,30 +733,17 @@ static void step_fox(Model& m, int i, PRng& rng, const std::vector<int>& prey, i
     if (rng.unit() >= level) return; // descanso
     if (f.hunger < HUNGER_THRESHOLD) { double a = rng.range(0.0, TAU), dd = rng.range(50.0, 200.0);
         f.x = clampd(f.x + std::cos(a) * dd, 0, m.params.width); f.y = clampd(f.y + std::sin(a) * dd, 0, m.params.height); return; }
-    // --- hunt ---
-    // (a) evitación de área: riesgo sumado por perros dentro de DOG_AVOID_RADIUS
-    // + memoria de zonas peligrosas. Si supera la aversión, aborta y se aleja.
-    {
-        double risk = 0, wx = 0, wy = 0, wsum = 0;
-        for (auto& dgp : m.dog_positions) {
-            double ddx = f.x - dgp.first, ddy = f.y - dgp.second, dist = std::sqrt(ddx * ddx + ddy * ddy);
-            if (dist < DOG_AVOID_RADIUS) { double r = 1.0 - dist / DOG_AVOID_RADIUS; risk += r; wx += dgp.first * r; wy += dgp.second * r; wsum += r; }
-        }
-        for (auto& z : f.danger_zones) {
-            double ddx = f.x - z.x, ddy = f.y - z.y, dist = std::sqrt(ddx * ddx + ddy * ddy);
-            if (dist < DANGER_RADIUS) { double age = (double)(now - z.step) / (double)DANGER_TTL;
-                double r = (1.0 - age) * (1.0 - dist / DANGER_RADIUS); risk += r; wx += z.x * r; wy += z.y * r; wsum += r; }
-        }
-        double mult = f.is_chilla ? 1.8 : 1.0;
-        if (risk * mult > f.risk_aversion) {
-            f.danger_zones.push_back({f.x, f.y, now}); if (f.danger_zones.size() > 64) f.danger_zones.erase(f.danger_zones.begin());
-            double fx = wsum > 0 ? wx / wsum : f.x, fy = wsum > 0 ? wy / wsum : f.y;
-            double ax = f.x - fx, ay = f.y - fy; norm(ax, ay);
-            f.x = clampd(f.x + ax * FOX_SPEED_WALK, 0, m.params.width); f.y = clampd(f.y + ay * FOX_SPEED_WALK, 0, m.params.height);
-            f.stalk_target = -1; return;
-        }
-    }
-    // (b) ataque comprometido: si venía acechando y la presa está a tiro, ataca
+    // --- hunt --- (reordenado 2026-09-11 para reproducir Fox.hunt del Python:
+    // detect -> select_target -> evaluate_risk(target) -> aborto -> approach ->
+    // attempt. El C++ evaluaba el riesgo ANTES de detectar presa y en la posición
+    // del zorro, corriendo el aborto-y-huida en CADA paso activo aunque no hubiera
+    // presa; eso expulsaba al zorro del rebaño mucho más agresivamente que el
+    // Python y sobredisparaba el efecto del LGD. Ahora el aborto sólo ocurre con un
+    // objetivo seleccionado, y sin presa se hace la búsqueda sesgada por el
+    // paisaje del miedo (search_for_prey), no una huida dura.)
+    // (b) ataque comprometido: si venía acechando y la presa está a tiro, ataca.
+    // (El acecho es el mecanismo C++ de ventana de intercepción del perro; el
+    //  Python no lo tiene. Se conserva.)
     { int tid = f.stalk_target; f.stalk_target = -1;
         if (tid >= 0 && m.agents[tid].alive) {
             double ddx = f.x - m.agents[tid].x, ddy = f.y - m.agents[tid].y;
@@ -440,30 +751,111 @@ static void step_fox(Model& m, int i, PRng& rng, const std::vector<int>& prey, i
         }
     }
     // (c) detección de presas: precomputada en paralelo (fox_detect), pasada como
-    // argumento. Es la parte cara del zorro; el resto (selección/ataque/mutación)
-    // sigue secuencial leyendo estado vivo.
-    if (prey.empty()) { double a = rng.range(0.0, TAU);
-        f.x = clampd(f.x + std::cos(a) * FOX_SPEED_WALK, 0, m.params.width); f.y = clampd(f.y + std::sin(a) * FOX_SPEED_WALK, 0, m.params.height); return; }
-    // seleccionar por score (vuln; -0.3 oveja si hay prey switching; +0.2 cordero)
-    bool sw = hares_nearby >= 2;
+    // argumento. Sin presa -> búsqueda activa sesgada por el paisaje del miedo.
+    if (prey.empty()) { fox_search_for_prey(m, f, rng); return; }
+    // Seleccionar por score: vulnerabilidad + preferencia saturante (A2) +
+    // bonus de cordero. s(n_h) satura en la disponibilidad local de liebres.
+    const double s_switch = (hares_nearby > 0 && PREY_SWITCH_N_HALF > 0.0)
+        ? (double)hares_nearby / ((double)hares_nearby + PREY_SWITCH_N_HALF)
+        : 0.0;
+    // Bonus por lejanía del perro: es el mismo para todas las presas de este
+    // zorro, así que no altera el ranking, pero se incluye por fidelidad.
+    const double dog_d = m.nearest_dog_dist(f.x, f.y, 1000.0);
+    const double m_far_dog = (dog_d >= 0) ? std::min(dog_d / 500.0, 1.0) * FOX_FAR_FROM_DOG_BONUS
+                                          : FOX_FAR_FROM_DOG_BONUS;
+    // Índice de aislamiento O(p·k) en vez de O(p²): para listas grandes se agrupan
+    // las presas de ESTE zorro en celdas de 50 m (hash local reutilizado por
+    // thread) y cada candidata consulta su vecindad 3×3; para listas chicas el
+    // escaneo directo es más barato que armar el índice. Los dos caminos cuentan
+    // EXACTAMENTE el mismo conjunto (presas de la lista, vivas, a <50 m), así que
+    // es bit-idéntico — sólo cambia cómo se encuentran. El conteo lee el estado
+    // VIVO de las presas (cambia dentro de B2 al matar), por eso no se precomputa
+    // en B1; el índice se arma aquí y el `alive` se consulta en vivo.
+    const bool iso_indexed = prey.size() > ISO_DIRECT_MAX;
+    static thread_local std::unordered_map<uint64_t, std::vector<int>> iso_cells;
+    if (iso_indexed) {
+        iso_cells.clear();
+        for (int qid : prey) { const Animal& qa = m.agents[qid];
+            uint64_t cx = (uint64_t)(int64_t)std::floor(qa.x / ISO_CELL);
+            uint64_t cy = (uint64_t)(int64_t)std::floor(qa.y / ISO_CELL);
+            iso_cells[(cx << 32) | cy].push_back(qid); }
+    }
     int best = prey[0]; double best_score = -1e300;
     for (int pid : prey) { Animal& pa = m.agents[pid]; if (!pa.alive) continue;
         double score = pa.vulnerability;
-        if (pa.species == SHEEP && sw) score -= 0.3;
+        if (pa.species == HARE)       score += PREY_SWITCH_BETA_HARE  * s_switch;
+        else if (pa.species == SHEEP) score -= PREY_SWITCH_BETA_SHEEP * s_switch;
         if (pa.is_lamb) score += 0.2;
+        // Aislamiento: cuenta los CONGÉNERES detectados a menos de 50 m de la
+        // presa candidata, entre los que este zorro tiene en su lista.
+        int nearby = 0;
+        if (iso_indexed) {
+            int64_t pcx = (int64_t)std::floor(pa.x / ISO_CELL);
+            int64_t pcy = (int64_t)std::floor(pa.y / ISO_CELL);
+            for (int64_t ox = -1; ox <= 1; ++ox) for (int64_t oy = -1; oy <= 1; ++oy) {
+                int64_t kx = pcx + ox, ky = pcy + oy; if (kx < 0 || ky < 0) continue;
+                auto it = iso_cells.find(((uint64_t)kx << 32) | (uint64_t)ky);
+                if (it == iso_cells.end()) continue;
+                for (int qid : it->second) { if (qid == pid) continue; const Animal& qa = m.agents[qid];
+                    if (!qa.alive) continue;
+                    const double ddx = pa.x - qa.x, ddy = pa.y - qa.y;
+                    if (ddx * ddx + ddy * ddy < 50.0 * 50.0) nearby++; }
+            }
+        } else {
+            for (int qid : prey) { if (qid == pid) continue; const Animal& qa = m.agents[qid];
+                if (!qa.alive) continue;
+                const double ddx = pa.x - qa.x, ddy = pa.y - qa.y;
+                if (ddx * ddx + ddy * ddy < 50.0 * 50.0) nearby++; }
+        }
+        score += (1.0 - std::min((double)nearby / 10.0, 1.0)) * FOX_ISOLATED_BONUS;
+        score += m_far_dog;
+        // Penalización por zona peligrosa recordada por este zorro (Python:
+        // dist<300 -> score -= intensity*0.3; break tras la primera).
+        for (const auto& z : f.danger_zones) {
+            const double zdx = pa.x - z.x, zdy = pa.y - z.y;
+            if (zdx * zdx + zdy * zdy < 300.0 * 300.0) { score -= z.intensity * 0.3; break; } }
         if (score > best_score) { best_score = score; best = pid; } }
     if (!m.agents[best].alive) return;
     double tx = m.agents[best].x, ty = m.agents[best].y; // posición VIVA de la presa
+    // (d) evaluación de riesgo y aborto — PORT FIEL de Fox.hunt: se evalúa sobre
+    // la PRESA seleccionada. Si el gate logístico dispara, recuerda la zona
+    // (intensity=risk) y ejecuta avoid_and_search (huir del perro <1000 m, si no,
+    // caminar al azar). Con params.n_dogs == 0 el riesgo del perro es cero.
+    {
+        const double risk = fox_evaluate_risk(m, f, tx, ty);
+        const double abort_prob = 1.0 / (1.0 + std::exp(-RISK_ABORT_SHARPNESS * (risk - f.risk_aversion)));
+        if (rng.unit() < abort_prob) {
+            f.danger_zones.push_back({tx, ty, now, risk});   // add_dangerous_zone(target.pos, intensity=risk)
+            if (f.danger_zones.size() > 64) f.danger_zones.erase(f.danger_zones.begin());
+            double dgx, dgy;                                  // avoid_and_search()
+            if (m.nearest_dog_pos(f.x, f.y, 1000.0, dgx, dgy)) {
+                double ax = f.x - dgx, ay = f.y - dgy; norm(ax, ay);
+                f.x = clampd(f.x + ax * FOX_SPEED_WALK, 0, m.params.width);
+                f.y = clampd(f.y + ay * FOX_SPEED_WALK, 0, m.params.height);
+            } else {
+                double a = rng.range(0.0, TAU);
+                f.x = clampd(f.x + std::cos(a) * FOX_SPEED_WALK, 0, m.params.width);
+                f.y = clampd(f.y + std::sin(a) * FOX_SPEED_WALK, 0, m.params.height);
+            }
+            return;
+        }
+    }
+    // (e) approach_prey + intento si queda a tiro.
     double to_x = tx - f.x, to_y = ty - f.y; double tolen = std::sqrt(to_x * to_x + to_y * to_y);
     double step = std::min(FOX_SPEED_WALK, tolen); double ux = to_x, uy = to_y; norm(ux, uy);
     f.x = clampd(f.x + ux * step, 0, m.params.width); f.y = clampd(f.y + uy * step, 0, m.params.height);
     double adx = f.x - tx, ady = f.y - ty;
     if (std::sqrt(adx * adx + ady * ady) < FOX_ATTACK_RADIUS) {
-        // Si hay un perro en rango de detección, NO mata este tick: queda en
-        // acecho expuesto (el perro tendrá un turno para interceptarlo). Sin
-        // perro cerca, mata de inmediato.
-        bool dog_near = m.nearest_dog_dist(f.x, f.y, DOG_DETECTION_RADIUS) >= 0;
-        if (dog_near) f.stalk_target = best; else attempt_predation(m, i, best, rng);
+        // Acecho/intercepción (mecanismo C++, NO presente en el Python del paper 1,
+        // cuyo zorro mata de inmediato al llegar a <50 m). Si hay un perro en rango
+        // de detección, el zorro NO mata este tick: queda en acecho expuesto y el
+        // perro tendrá un turno para interceptarlo. Este canal extra hace que el
+        // perro del C++ sobre-disuada respecto del Python (~35-40% más bajo el
+        // con-perro). Conmutable con SIGRID_NO_STALK para el A/B de fidelidad.
+        if (!FOX_NO_STALK && m.nearest_dog_dist(f.x, f.y, DOG_DETECTION_RADIUS) >= 0)
+            f.stalk_target = best;
+        else
+            attempt_predation(m, i, best, rng);
     }
 }
 
@@ -471,6 +863,8 @@ static void step_fox(Model& m, int i, PRng& rng, const std::vector<int>& prey, i
 static void step_hare(Model& m, int i, PRng& rng) {
     Animal& h = m.agents[i];
     h.age_days += 1.0 / 24.0;
+    h.days_since_repro += 1.0 / 24.0;
+    h.pending_offspring = 0;
     if (!h.mature && h.age_days * 24.0 >= HARE_MATURITY_AGE_H) { h.mature = true; h.vulnerability = HARE_VULN_MATURE; }
     h.fear = std::max(h.fear - 0.15, 0.0);
     double pbest = 1e300, ppx = 0, ppy = 0; bool found = false;
@@ -484,7 +878,86 @@ static void step_hare(Model& m, int i, PRng& rng) {
     } else {
         double dx, dy; food_direction(m.veg_quality, h.x, h.y, dx, dy);
         h.x = clampd(h.x + dx * HARE_SPEED_NORMAL, 0, m.params.width); h.y = clampd(h.y + dy * HARE_SPEED_NORMAL, 0, m.params.height);
+        // forrajea: gana energía según la calidad del pastizal donde queda
+        h.energy = std::min(100.0, h.energy + m.veg_quality.get(h.x, h.y) * HARE_FORAGE_GAIN);
     }
+    // desgaste y muerte por inanición
+    h.energy -= HARE_UPKEEP + h.fear * 1.5;
+    if (h.energy <= 0.0) { h.alive = false; return; }
+
+    // ¿intenta reproducirse? Densidad local sobre la INSTANTÁNEA, que es la
+    // convención de consulta espacial de este port (el Python recorre posiciones
+    // vivas; la diferencia es la misma que ya existe en el resto del modelo).
+    if (h.energy > HARE_REPRO_ENERGY_MIN && h.days_since_repro > HARE_REPRO_DAYS_MIN
+        && h.fear < HARE_REPRO_FEAR_MAX) {
+        int local = 0;
+        m.grid.within(h.x, h.y, HARE_LOCAL_RADIUS, [&](const Snap& sn, double) {
+            if (sn.alive && sn.species == HARE) local++; });
+        if (local > 0) local--;   // no contarse a sí misma
+        const double local_area_ha = 3.14159265358979323846 * HARE_LOCAL_RADIUS * HARE_LOCAL_RADIUS / 10000.0;
+        const double local_density = (double)local / std::max(local_area_ha, 0.1);
+        if (local_density < HARE_CARRYING_CAPACITY && rng.unit() < HARE_REPRODUCTION_RATE) {
+            const int n_off = 2 + (int)(rng.unit() * 3.0);        // 2..4
+            h.pending_offspring = n_off;
+            for (int k = 0; k < n_off; ++k) {
+                const double a = rng.range(0.0, TAU), d = rng.range(10.0, 50.0);
+                h.off_x[k] = clampd(h.x + std::cos(a) * d, 0, m.params.width);
+                h.off_y[k] = clampd(h.y + std::sin(a) * d, 0, m.params.height);
+            }
+            h.days_since_repro = 0.0;
+            h.energy -= HARE_REPRO_COST;
+        }
+    }
+}
+
+// ---- dinámica poblacional de la liebre: fase C (secuencial, determinista) ----
+// Materializa los nacimientos decididos en la fase A y aplica la mortalidad
+// denso-dependiente. Va DESPUÉS de la fase B, recorriendo índices en orden, de
+// modo que el resultado es independiente del número de hilos.
+
+// Nacimientos. Devuelve cuántas crías se crearon. Los índices nuevos se
+// agregan a `phaseA` para que caminen desde el tick siguiente.
+static int hare_births(Model& m, std::vector<int>& phaseA) {
+    int born = 0;
+    const size_t n0 = m.agents.size();          // no iterar sobre las recién nacidas
+    for (size_t i = 0; i < n0; ++i) {
+        Animal& h = m.agents[i];
+        if (!h.alive || h.species != HARE || h.pending_offspring <= 0) continue;
+        for (int k = 0; k < h.pending_offspring; ++k) {
+            Animal a{};
+            a.species = HARE; a.alive = true; a.mother = -1;
+            a.x = h.off_x[k]; a.y = h.off_y[k];
+            a.energy = 80.0; a.age_days = 0.0; a.fear = 0.0;
+            a.mature = false; a.vulnerability = HARE_VULN_JUV;
+            a.days_since_repro = 0.0;
+            m.agents.push_back(a);
+            phaseA.push_back((int)m.agents.size() - 1);
+            born++;
+        }
+        m.agents[i].pending_offspring = 0;
+    }
+    return born;
+}
+
+// Mortalidad denso-dependiente: si la densidad supera la capacidad de carga,
+// mueren las de MENOR energía. El desempate es por índice, así que el conjunto
+// podado es único para un estado dado.
+static int hare_cull(Model& m) {
+    const double area_ha = (m.params.width * m.params.height) / 10000.0;
+    std::vector<int> live;
+    for (size_t i = 0; i < m.agents.size(); ++i)
+        if (m.agents[i].alive && m.agents[i].species == HARE) live.push_back((int)i);
+    const double density = (double)live.size() / area_ha;
+    if (density <= HARE_CARRYING_CAPACITY) return 0;
+    const int n_remove = (int)((density - HARE_CARRYING_CAPACITY) * area_ha);
+    if (n_remove <= 0) return 0;
+    std::stable_sort(live.begin(), live.end(), [&](int a, int b) {
+        if (m.agents[a].energy != m.agents[b].energy) return m.agents[a].energy < m.agents[b].energy;
+        return a < b;                     // desempate determinista
+    });
+    const int k = std::min(n_remove, (int)live.size());
+    for (int j = 0; j < k; ++j) m.agents[live[j]].alive = false;
+    return k;
 }
 
 // ---- perro guardián (determinista) ----
@@ -507,7 +980,7 @@ static void step_dog(Model& m, int i) {
             }
         }
     }
-    if (best_id >= 0) {
+    if (best_id >= 0) { m.n_chase++;
         double to_x = bx - dog.x, to_y = by - dog.y, tolen = std::sqrt(to_x * to_x + to_y * to_y);
         double step = std::min(DOG_SPEED_CHASE, tolen), ux = to_x, uy = to_y; norm(ux, uy);
         dog.x = clampd(dog.x + ux * step, 0, m.params.width); dog.y = clampd(dog.y + uy * step, 0, m.params.height);
@@ -531,16 +1004,62 @@ static void step_dog(Model& m, int i) {
             }
             uint64_t now = m.step_count;
             for (auto& pr : deterred) { Animal& fox = m.agents[pr.first]; if (!fox.alive) continue;
-                fox.fear = 1.0; fox.hunger = 0.0; fox.stalk_target = -1;
+                // El Python (dog.chase) al disuadir SÓLO agrega una zona peligrosa
+                // al zorro; NO le resetea hunger/fear. El C++ además hacía
+                // fear=1/hunger=0, que sidelina al zorro ~30 h (hunger<0.3 -> no
+                // caza) — un canal de sobre-supresión ausente en el Python.
+                // Conmutable con SIGRID_FAITHFUL_DETER para el A/B de fidelidad.
+                if (!DOG_FAITHFUL_DETER) { fox.fear = 1.0; fox.hunger = 0.0; }
+                fox.stalk_target = -1;
                 fox.danger_zones.push_back({pr.second.first, pr.second.second, now});
                 if (fox.danger_zones.size() > 64) fox.danger_zones.erase(fox.danger_zones.begin()); }
         }
         return;
     }
-    // patrullaje circular alrededor del centroide del rebaño (posiciones vivas)
+    // (2) rastro olfativo: evento de depredación reciente dentro del radio.
+    {
+        const uint64_t now = m.step_count;
+        double tx = 0, ty = 0; long best_step = -1;
+        for (size_t k = m.trail.size(); k-- > 0; ) {
+            const auto& ev = m.trail[k];
+            if (now - ev.step > DOG_TRAIL_TTL_HOURS) break;   // lista ordenada por tiempo
+            const double dx = ev.x - dog.x, dy = ev.y - dog.y;
+            if (std::sqrt(dx * dx + dy * dy) <= DOG_TRAIL_RADIUS && (long)ev.step > best_step) {
+                tx = ev.x; ty = ev.y; best_step = (long)ev.step; }
+        }
+        if (best_step >= 0) { m.n_trail++;   // investigar: se acerca a velocidad de patrulla
+            double dx = tx - dog.x, dy = ty - dog.y, len = std::sqrt(dx * dx + dy * dy);
+            const double stp = std::min(DOG_SPEED_PATROL, len); norm(dx, dy);
+            dog.x = clampd(dog.x + dx * stp, 0, m.params.width);
+            dog.y = clampd(dog.y + dy * stp, 0, m.params.height);
+            return;
+        }
+    }
+    // centroide del rebaño (posiciones vivas)
     double cx = 0, cy = 0, n = 0;
     for (auto& a : m.agents) if (a.alive && a.species == SHEEP) { cx += a.x; cy += a.y; n += 1; }
     double flx = n > 0 ? cx / n : dog.patrol_cx, fly = n > 0 ? cy / n : dog.patrol_cy;
+    // (3) arreo: si hay ovejas lejos del centro, el perro se pone POR DETRÁS de
+    // la más alejada (a 50 m en la dirección opuesta al rebaño) para empujarla.
+    if (n > 1) {
+        int worst = -1; double worst_d = DOG_SCATTERED_THRESHOLD;
+        for (size_t k = 0; k < m.agents.size(); ++k) { const Animal& a = m.agents[k];
+            if (!a.alive || a.species != SHEEP) continue;
+            const double dx = a.x - flx, dy = a.y - fly, d = std::sqrt(dx * dx + dy * dy);
+            if (d > worst_d) { worst_d = d; worst = (int)k; } }
+        if (worst >= 0) { m.n_herd++;
+            const Animal& t = m.agents[worst];
+            double dx = t.x - flx, dy = t.y - fly; const double dist = std::sqrt(dx * dx + dy * dy);
+            if (dist > 0) {
+                const double bx = t.x + (dx / dist) * 50.0, by = t.y + (dy / dist) * 50.0;
+                double mx = bx - dog.x, my = by - dog.y; const double len = std::sqrt(mx * mx + my * my);
+                const double stp = std::min(DOG_SPEED_PATROL, len); norm(mx, my);
+                dog.x = clampd(dog.x + mx * stp, 0, m.params.width);
+                dog.y = clampd(dog.y + my * stp, 0, m.params.height);
+                return;
+            }
+        }
+    }
     dog.patrol_angle += 0.1;
     double tx = flx + std::cos(dog.patrol_angle) * DOG_PATROL_RADIUS, ty = fly + std::sin(dog.patrol_angle) * DOG_PATROL_RADIUS;
     double dx = tx - dog.x, dy = ty - dog.y; norm(dx, dy);
@@ -564,6 +1083,10 @@ static void build_model(const Params& params, uint64_t seed, Model& m,
 
     m.params = params; m.n_sheep_initial = n_sheep;
     build_rasters(params.width, params.height, rng_build, m.veg_quality, m.veg_cover);
+    // Paisaje del miedo del zorro: mismas dimensiones/height que los rasters de
+    // vegetación (misma grilla CELL_SIZE), inicializado en cero.
+    m.fox_fear = {m.veg_cover.cols, m.veg_cover.rows, m.veg_cover.height,
+                  std::vector<double>((size_t)m.veg_cover.cols * m.veg_cover.rows, 0.0)};
 
     double fcx = params.width / 2.0, fcy = params.height / 2.0;
     std::vector<int> adult_ids;
