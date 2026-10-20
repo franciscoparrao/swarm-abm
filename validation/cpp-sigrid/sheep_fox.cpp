@@ -52,6 +52,7 @@ static double run_loss_rate(const Params& params, uint64_t seed, uint64_t n_days
         // mortalidad denso-dependiente una vez al día, como en model_v2.step().
         if (hare_births(m, phaseA) > 0) { fdprey.resize(m.agents.size()); fdhares.resize(m.agents.size(), 0); }
         if (step % 24 == 0) hare_cull(m);
+        hunt_events(m, step, seed);   // cacería humana (inerte si hunt_prob<=0)
         // término anticipado si no quedan ovejas
         bool any_sheep = false; for (auto& a : m.agents) if (a.alive && a.species == SHEEP) { any_sheep = true; break; }
         if (!any_sheep) break;
@@ -79,6 +80,7 @@ int main(int argc, char** argv) {
     p.hare_density = darg("--hare-density", p.hare_density);
     p.n_dogs = (int)darg("--dogs", p.n_dogs);
     p.farms_x = (int)darg("--farms-x", p.farms_x); p.farms_y = (int)darg("--farms-y", p.farms_y);
+    p.hunt_prob = darg("--hunt-prob", p.hunt_prob);   // cacería: prob. por granja/día
     set_switch_lambda(darg("--switch-lambda", 1.0));  // fuerza del prey switching
     p.width = darg("--width", p.width);   // escalar el AREA a densidad constante
     p.height = darg("--height", p.height); // -> muchos agentes, pocos vecinos/query

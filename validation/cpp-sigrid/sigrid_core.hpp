@@ -266,7 +266,8 @@ static inline uint64_t agent_seed(uint64_t base, uint64_t tick, uint64_t id) {
 struct Params { double width = 2000, height = 2000, sheep_density = 0.96, fox_density = 8.4,
                 fox_predation_effectiveness = 0.14, lamb_proportion = 0.2,
                 chilla_density = 0.0, hare_density = 0.0; int n_dogs = 0;
-                int farms_x = 1, farms_y = 1; };  // particion sintetica en grilla (1x1 = una granja)
+                int farms_x = 1, farms_y = 1;   // particion sintetica en grilla (1x1 = una granja)
+                double hunt_prob = 0.0; };       // caceria: prob. por granja/dia (0 = inerte)
 
 // ---- espacio: índice de celdas sobre la instantánea (CSR + SoA) ----
 // Layout memory-bound (Hito 5): en vez de una lista ligada (head/nxt) sobre
@@ -480,6 +481,7 @@ struct Model {
     Raster fox_fear;   // paisaje del miedo perro->zorro (combined_risk suavizado)
     int current_hour = 0; uint64_t step_count = 0;
     long sheep_killed = 0, hares_killed = 0, predation_attempts = 0, att_sheep = 0, att_hare = 0;
+    long foxes_hunted = 0;   // zorros abatidos por cacería humana
     // Rastro olfativo: posición y paso de los eventos de depredación recientes.
     struct TrailEvent { double x, y; uint64_t step; };
     long n_trail = 0, n_herd = 0, n_chase = 0;
@@ -491,6 +493,7 @@ struct Model {
     // particion analitica en grilla params.farms_x x params.farms_y (para pruebas).
     int n_farms = 1, farm_cols = 0, farm_rows = 0; double farm_csz = 30.0;
     std::vector<int> farm_raster;
+    std::vector<std::pair<double,double>> farm_casco;  // casco (centroide) de cada granja
     int farm_of(double x, double y) const {
         if (n_farms <= 1) return 0;
         if (!farm_raster.empty()) {
@@ -992,6 +995,40 @@ static int hare_cull(Model& m) {
     return k;
 }
 
+// Cacería humana: parámetros (placeholder, a calibrar con datos de Diego y literatura).
+static const uint64_t HUNT_SALT = 0xF000000000000000ULL;  // distinto de ids (pequeños) y del 0xFFFF... del barajado
+static const double HUNT_RADIUS         = 1000.0;  // radio de disparo + miedo (m)
+static const double HUNT_KILL_PROB      = 0.15;    // prob. de abatir un zorro dentro del radio
+static const double HUNT_FEAR_INTENSITY = 1.0;     // intensidad del hotspot de miedo que deja
+
+// Evento estocástico de cacería, anclado al casco de cada granja. Una oportunidad
+// al inicio de cada día: con prob. hunt_prob la granja sale a cazar; cada zorro en
+// HUNT_RADIUS muere con prob. HUNT_KILL_PROB (disparo) y, si sobrevive, recuerda el
+// sitio como zona peligrosa (hotspot de miedo que luego evita). Reusa la memoria de
+// danger_zones de los zorros. Con hunt_prob<=0 es inerte -> bit-idéntico. Secuencial,
+// agentes en orden de índice; RNG determinista (seed, step, salt+granja).
+static long hunt_events(Model& m, uint64_t step, uint64_t seed) {
+    if (m.params.hunt_prob <= 0.0 || step % 24 != 0) return 0;
+    long shot = 0; const uint64_t now = m.step_count;
+    for (int f = 0; f < m.n_farms; ++f) {
+        PRng r(agent_seed(seed, step, HUNT_SALT + (uint64_t)f));
+        if (r.unit() >= m.params.hunt_prob) continue;
+        const double hx = m.farm_casco[f].first, hy = m.farm_casco[f].second;
+        for (auto& a : m.agents) {
+            if (!a.alive || a.species != FOX) continue;
+            const double dx = a.x - hx, dy = a.y - hy;
+            if (dx * dx + dy * dy > HUNT_RADIUS * HUNT_RADIUS) continue;
+            if (r.unit() < HUNT_KILL_PROB) { a.alive = false; shot++; }
+            else {
+                a.danger_zones.push_back({hx, hy, now, HUNT_FEAR_INTENSITY});
+                if (a.danger_zones.size() > 64) a.danger_zones.erase(a.danger_zones.begin());
+            }
+        }
+    }
+    m.foxes_hunted += shot;
+    return shot;
+}
+
 // ---- perro guardián (determinista) ----
 static void step_dog(Model& m, int i) {
     Animal& dog = m.agents[i];
@@ -1170,6 +1207,18 @@ static void build_model(const Params& params, uint64_t seed, Model& m,
     m.n_farms = std::max(1, params.farms_x * params.farms_y);
     for (auto& a : m.agents)
         if (a.species == SHEEP || a.species == DOG) a.farm = m.farm_of(a.x, a.y);
+    // Cascos: centroide geométrico de cada granja (ancla de la cacería). Muestreo
+    // del dominio a 30 m; sirve igual para la partición sintética y para un ráster real.
+    m.farm_casco.assign(m.n_farms, {params.width / 2.0, params.height / 2.0});
+    {
+        std::vector<double> sx(m.n_farms, 0), sy(m.n_farms, 0); std::vector<long> cnt(m.n_farms, 0);
+        int cols = std::max(1, (int)(params.width / 30.0)), rows = std::max(1, (int)(params.height / 30.0));
+        for (int r = 0; r < rows; ++r) for (int c = 0; c < cols; ++c) {
+            double x = (c + 0.5) * 30.0, y = (r + 0.5) * 30.0; int f = m.farm_of(x, y);
+            if (f >= 0 && f < m.n_farms) { sx[f] += x; sy[f] += y; cnt[f]++; }
+        }
+        for (int f = 0; f < m.n_farms; ++f) if (cnt[f] > 0) m.farm_casco[f] = {sx[f] / cnt[f], sy[f] / cnt[f]};
+    }
 
     phaseA.clear(); phaseB.clear(); foxidx.clear();
     for (size_t k = 0; k < m.agents.size(); ++k) {
