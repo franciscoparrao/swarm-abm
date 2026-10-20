@@ -188,6 +188,9 @@ struct Animal {
     std::vector<DangerZone> danger_zones; int stalk_target = -1;
     // perro: patrullaje circular
     double patrol_angle = 0.0, patrol_cx = 0.0, patrol_cy = 0.0;
+    // granja de origen (ovejas/corderos/perros, especies cercadas). Los zorros y
+    // liebres cruzan predios libres y no usan este campo.
+    int farm = 0;
     // liebre: reproducción. La decisión (cuántas crías y dónde) se toma en la
     // fase A paralela con el RNG por-agente y se MATERIALIZA en una fase
     // secuencial posterior: así el resultado no depende del orden de hilos y
@@ -262,7 +265,8 @@ static inline uint64_t agent_seed(uint64_t base, uint64_t tick, uint64_t id) {
 
 struct Params { double width = 2000, height = 2000, sheep_density = 0.96, fox_density = 8.4,
                 fox_predation_effectiveness = 0.14, lamb_proportion = 0.2,
-                chilla_density = 0.0, hare_density = 0.0; int n_dogs = 0; };
+                chilla_density = 0.0, hare_density = 0.0; int n_dogs = 0;
+                int farms_x = 1, farms_y = 1; };  // particion sintetica en grilla (1x1 = una granja)
 
 // ---- espacio: índice de celdas sobre la instantánea (CSR + SoA) ----
 // Layout memory-bound (Hito 5): en vez de una lista ligada (head/nxt) sobre
@@ -481,6 +485,24 @@ struct Model {
     long n_trail = 0, n_herd = 0, n_chase = 0;
     std::vector<TrailEvent> trail; int n_sheep_initial = 0;
 
+    // Granjas (modelo multi-granja secuencial). Con n_farms<=1 el dominio es una
+    // sola granja y toda la logica de cercos queda inerte (bit-identico al modelo
+    // de una granja). farm_of usa el raster real si esta cargado; si no, una
+    // particion analitica en grilla params.farms_x x params.farms_y (para pruebas).
+    int n_farms = 1, farm_cols = 0, farm_rows = 0; double farm_csz = 30.0;
+    std::vector<int> farm_raster;
+    int farm_of(double x, double y) const {
+        if (n_farms <= 1) return 0;
+        if (!farm_raster.empty()) {
+            int cx = (int)(x / farm_csz); cx = cx < 0 ? 0 : (cx >= farm_cols ? farm_cols - 1 : cx);
+            int cy = (int)(y / farm_csz); cy = cy < 0 ? 0 : (cy >= farm_rows ? farm_rows - 1 : cy);
+            return farm_raster[(size_t)cy * farm_cols + cx];
+        }
+        int gx = (int)(x / (params.width  / params.farms_x)); gx = gx < 0 ? 0 : (gx >= params.farms_x ? params.farms_x - 1 : gx);
+        int gy = (int)(y / (params.height / params.farms_y)); gy = gy < 0 ? 0 : (gy >= params.farms_y ? params.farms_y - 1 : gy);
+        return gy * params.farms_x + gx;
+    }
+
     void before_step() {
         current_hour = (int)(step_count % 24); step_count++;
         dog_positions.clear();
@@ -532,6 +554,16 @@ static void food_direction(const Raster& q, double px, double py, double& dx, do
 }
 static void norm(double& x, double& y) { double l = std::sqrt(x * x + y * y); if (l > 1e-12) { x /= l; y /= l; } else { x = 0; y = 0; } }
 
+// Movimiento con cercos: las especies cercadas (oveja/cordero/perro) no cruzan a
+// otra granja; si el destino cae en otra granja, el agente no se mueve (queda
+// contra el cerco). Con n_farms<=1 nunca bloquea -> bit-identico. Zorros y
+// liebres NO pasan por aqui (cruzan predios libres, se mueven con clampd directo).
+static inline void move_fenced(Model& m, Animal& a, double nx, double ny) {
+    nx = clampd(nx, 0, m.params.width); ny = clampd(ny, 0, m.params.height);
+    if (m.n_farms > 1 && m.farm_of(nx, ny) != a.farm) return;
+    a.x = nx; a.y = ny;
+}
+
 // ---- oveja ----
 static void step_sheep(Model& m, int i, PRng& rng) {
     Animal& s = m.agents[i];
@@ -546,7 +578,7 @@ static void step_sheep(Model& m, int i, PRng& rng) {
         double dx, dy;
         if (found) { dx = s.x - ppx; dy = s.y - ppy; norm(dx, dy); }
         else { double a = rng.range(0.0, TAU); dx = std::cos(a); dy = std::sin(a); }
-        s.x = clampd(s.x + dx * sp, 0, m.params.width); s.y = clampd(s.y + dy * sp, 0, m.params.height);
+        move_fenced(m, s, s.x + dx * sp, s.y + dy * sp);
     } else {
         bool dog_near = m.nearest_dog_dist(s.x, s.y, DOG_PROXIMITY_VIGILANCE) >= 0;
         double p_move = dog_near ? (0.60 + 0.02) : (0.76 + 0.04);
@@ -580,7 +612,7 @@ static void step_sheep(Model& m, int i, PRng& rng) {
             double dy = vfy * 0.3 + vry * 0.2 + vcy * 0.2 + vdy * 0.3 + rng.normal(0.1);
             norm(dx, dy);
             double sp = s.is_lamb ? LAMB_SPEED : SHEEP_SPEED;
-            s.x = clampd(s.x + dx * sp, 0, m.params.width); s.y = clampd(s.y + dy * sp, 0, m.params.height);
+            move_fenced(m, s, s.x + dx * sp, s.y + dy * sp);
         }
     }
     if (s.is_lamb && s.age_days > LAMB_MATURATION_DAYS) { s.is_lamb = false; s.vulnerability = SHEEP_ADULT_VULN; }
@@ -983,7 +1015,7 @@ static void step_dog(Model& m, int i) {
     if (best_id >= 0) { m.n_chase++;
         double to_x = bx - dog.x, to_y = by - dog.y, tolen = std::sqrt(to_x * to_x + to_y * to_y);
         double step = std::min(DOG_SPEED_CHASE, tolen), ux = to_x, uy = to_y; norm(ux, uy);
-        dog.x = clampd(dog.x + ux * step, 0, m.params.width); dog.y = clampd(dog.y + uy * step, 0, m.params.height);
+        move_fenced(m, dog, dog.x + ux * step, dog.y + uy * step);
         double cdx = dog.x - bx, cdy = dog.y - by;
         if (best < DOG_CHASE_RADIUS && std::sqrt(cdx * cdx + cdy * cdy) < DOG_DETER_RADIUS) {
             // disuasión multi-objetivo: el objetivo + otros zorros dentro de
@@ -1030,21 +1062,20 @@ static void step_dog(Model& m, int i) {
         if (best_step >= 0) { m.n_trail++;   // investigar: se acerca a velocidad de patrulla
             double dx = tx - dog.x, dy = ty - dog.y, len = std::sqrt(dx * dx + dy * dy);
             const double stp = std::min(DOG_SPEED_PATROL, len); norm(dx, dy);
-            dog.x = clampd(dog.x + dx * stp, 0, m.params.width);
-            dog.y = clampd(dog.y + dy * stp, 0, m.params.height);
+            move_fenced(m, dog, dog.x + dx * stp, dog.y + dy * stp);
             return;
         }
     }
     // centroide del rebaño (posiciones vivas)
     double cx = 0, cy = 0, n = 0;
-    for (auto& a : m.agents) if (a.alive && a.species == SHEEP) { cx += a.x; cy += a.y; n += 1; }
+    for (auto& a : m.agents) if (a.alive && a.species == SHEEP && (m.n_farms <= 1 || a.farm == dog.farm)) { cx += a.x; cy += a.y; n += 1; }
     double flx = n > 0 ? cx / n : dog.patrol_cx, fly = n > 0 ? cy / n : dog.patrol_cy;
     // (3) arreo: si hay ovejas lejos del centro, el perro se pone POR DETRÁS de
     // la más alejada (a 50 m en la dirección opuesta al rebaño) para empujarla.
     if (n > 1) {
         int worst = -1; double worst_d = DOG_SCATTERED_THRESHOLD;
         for (size_t k = 0; k < m.agents.size(); ++k) { const Animal& a = m.agents[k];
-            if (!a.alive || a.species != SHEEP) continue;
+            if (!a.alive || a.species != SHEEP || (m.n_farms > 1 && a.farm != dog.farm)) continue;
             const double dx = a.x - flx, dy = a.y - fly, d = std::sqrt(dx * dx + dy * dy);
             if (d > worst_d) { worst_d = d; worst = (int)k; } }
         if (worst >= 0) { m.n_herd++;
@@ -1054,8 +1085,7 @@ static void step_dog(Model& m, int i) {
                 const double bx = t.x + (dx / dist) * 50.0, by = t.y + (dy / dist) * 50.0;
                 double mx = bx - dog.x, my = by - dog.y; const double len = std::sqrt(mx * mx + my * my);
                 const double stp = std::min(DOG_SPEED_PATROL, len); norm(mx, my);
-                dog.x = clampd(dog.x + mx * stp, 0, m.params.width);
-                dog.y = clampd(dog.y + my * stp, 0, m.params.height);
+                move_fenced(m, dog, dog.x + mx * stp, dog.y + my * stp);
                 return;
             }
         }
@@ -1063,7 +1093,7 @@ static void step_dog(Model& m, int i) {
     dog.patrol_angle += 0.1;
     double tx = flx + std::cos(dog.patrol_angle) * DOG_PATROL_RADIUS, ty = fly + std::sin(dog.patrol_angle) * DOG_PATROL_RADIUS;
     double dx = tx - dog.x, dy = ty - dog.y; norm(dx, dy);
-    dog.x = clampd(dog.x + dx * DOG_SPEED_PATROL, 0, m.params.width); dog.y = clampd(dog.y + dy * DOG_SPEED_PATROL, 0, m.params.height);
+    move_fenced(m, dog, dog.x + dx * DOG_SPEED_PATROL, dog.y + dy * DOG_SPEED_PATROL);
 }
 
 // ---- construcción de la población (idéntica en serial/OMP y BSPonMPI) ----
@@ -1135,6 +1165,12 @@ static void build_model(const Params& params, uint64_t seed, Model& m,
         a.patrol_cx = fcx; a.patrol_cy = fcy;
         m.agents.push_back(a);
     }
+    // Granjas: particion (sintetica por grilla si no hay raster real) y asignacion
+    // de la granja de origen a las especies cercadas. Con 1x1 -> n_farms=1, inerte.
+    m.n_farms = std::max(1, params.farms_x * params.farms_y);
+    for (auto& a : m.agents)
+        if (a.species == SHEEP || a.species == DOG) a.farm = m.farm_of(a.x, a.y);
+
     phaseA.clear(); phaseB.clear(); foxidx.clear();
     for (size_t k = 0; k < m.agents.size(); ++k) {
         int sp = m.agents[k].species;

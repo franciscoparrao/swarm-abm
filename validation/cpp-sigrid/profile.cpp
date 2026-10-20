@@ -30,6 +30,7 @@ int main(int argc, char** argv) {
     p.chilla_density = darg("--chilla-density", p.chilla_density);
     p.hare_density = darg("--hare-density", p.hare_density);
     p.n_dogs = (int)darg("--dogs", p.n_dogs);
+    p.farms_x = (int)darg("--farms-x", p.farms_x); p.farms_y = (int)darg("--farms-y", p.farms_y);
     p.width = darg("--width", p.width); p.height = darg("--height", p.height);
 
     Model m; std::vector<int> phaseA, phaseB, foxidx;
