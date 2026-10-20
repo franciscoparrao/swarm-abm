@@ -268,7 +268,8 @@ struct Params { double width = 2000, height = 2000, sheep_density = 0.96, fox_de
                 chilla_density = 0.0, hare_density = 0.0; int n_dogs = 0;
                 int farms_x = 1, farms_y = 1;   // particion sintetica en grilla (1x1 = una granja)
                 double hunt_prob = 0.0;          // caceria: prob. por granja/dia (0 = inerte)
-                const char* farm_raster_path = nullptr; };  // raster real de granjas (si != null, fija width/height)
+                const char* farm_raster_path = nullptr;    // raster real de granjas (si != null, fija width/height)
+                const char* cascos_path = nullptr; };       // casas reales por granja (ancla de cacería)
 
 // ---- espacio: índice de celdas sobre la instantánea (CSR + SoA) ----
 // Layout memory-bound (Hito 5): en vez de una lista ligada (head/nxt) sobre
@@ -494,7 +495,8 @@ struct Model {
     // particion analitica en grilla params.farms_x x params.farms_y (para pruebas).
     int n_farms = 1, farm_cols = 0, farm_rows = 0; double farm_csz = 30.0;
     std::vector<int> farm_raster;
-    std::vector<std::pair<double,double>> farm_casco;  // casco (centroide) de cada granja
+    std::vector<std::pair<double,double>> farm_casco;  // centroide de cada granja (centro del rebaño, fallback de cacería)
+    std::vector<std::vector<std::pair<double,double>>> farm_homesteads;  // casas reales por granja (ancla de cacería)
     int farm_of(double x, double y) const {
         if (n_farms <= 1) return 0;
         if (!farm_raster.empty()) {
@@ -1014,7 +1016,12 @@ static long hunt_events(Model& m, uint64_t step, uint64_t seed) {
     for (int f = 0; f < m.n_farms; ++f) {
         PRng r(agent_seed(seed, step, HUNT_SALT + (uint64_t)f));
         if (r.unit() >= m.params.hunt_prob) continue;
-        const double hx = m.farm_casco[f].first, hy = m.farm_casco[f].second;
+        // ancla: una casa real de la granja (elegida al azar) si hay; si no, el centroide.
+        double hx, hy;
+        if (f < (int)m.farm_homesteads.size() && !m.farm_homesteads[f].empty()) {
+            int c = (int)(r.unit() * (double)m.farm_homesteads[f].size());
+            hx = m.farm_homesteads[f][c].first; hy = m.farm_homesteads[f][c].second;
+        } else { hx = m.farm_casco[f].first; hy = m.farm_casco[f].second; }
         for (auto& a : m.agents) {
             if (!a.alive || a.species != FOX) continue;
             const double dx = a.x - hx, dy = a.y - hy;
@@ -1280,6 +1287,26 @@ static bool load_farm_raster(Model& m, const char* path) {
     std::fclose(fp);
     m.farm_cols = cols; m.farm_rows = rows; m.farm_csz = csz;
     m.farm_raster = std::move(data); m.n_farms = maxid + 1;
+    return true;
+}
+
+// Carga los cascos (casas) reales: cabecera "n" + n lineas "farm_id x y" en coords
+// locales. Llena m.farm_homesteads[farm]. Llamar DESPUES de build_model (n_farms ya
+// fijado). La cacería dispara desde una casa de la granja si hay; si no, del
+// centroide. Devuelve false si no pudo leerlo (path nulo o error).
+static bool load_cascos(Model& m, const char* path) {
+    if (!path) return false;
+    FILE* fp = std::fopen(path, "r");
+    if (!fp) { std::fprintf(stderr, "load_cascos: no pude abrir %s\n", path); return false; }
+    int n = 0;
+    if (std::fscanf(fp, "%d", &n) != 1 || n < 0) { std::fprintf(stderr, "load_cascos: cabecera invalida\n"); std::fclose(fp); return false; }
+    m.farm_homesteads.assign(m.n_farms, {});
+    for (int i = 0; i < n; ++i) {
+        int f = -1; double x = 0, y = 0;
+        if (std::fscanf(fp, "%d %lf %lf", &f, &x, &y) != 3) { std::fprintf(stderr, "load_cascos: dato invalido (casa %d)\n", i); std::fclose(fp); return false; }
+        if (f >= 0 && f < m.n_farms) m.farm_homesteads[f].push_back({x, y});
+    }
+    std::fclose(fp);
     return true;
 }
 
