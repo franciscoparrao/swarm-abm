@@ -267,7 +267,8 @@ struct Params { double width = 2000, height = 2000, sheep_density = 0.96, fox_de
                 fox_predation_effectiveness = 0.14, lamb_proportion = 0.2,
                 chilla_density = 0.0, hare_density = 0.0; int n_dogs = 0;
                 int farms_x = 1, farms_y = 1;   // particion sintetica en grilla (1x1 = una granja)
-                double hunt_prob = 0.0; };       // caceria: prob. por granja/dia (0 = inerte)
+                double hunt_prob = 0.0;          // caceria: prob. por granja/dia (0 = inerte)
+                const char* farm_raster_path = nullptr; };  // raster real de granjas (si != null, fija width/height)
 
 // ---- espacio: índice de celdas sobre la instantánea (CSR + SoA) ----
 // Layout memory-bound (Hito 5): en vez de una lista ligada (head/nxt) sobre
@@ -1155,17 +1156,55 @@ static void build_model(const Params& params, uint64_t seed, Model& m,
     m.fox_fear = {m.veg_cover.cols, m.veg_cover.rows, m.veg_cover.height,
                   std::vector<double>((size_t)m.veg_cover.cols * m.veg_cover.rows, 0.0)};
 
+    // --- granjas: fijar n_farms, áreas y cascos ANTES de crear la población, para
+    // repartir los rebaños por estancia. Con n_farms<=1 no se usa en la creación
+    // (se mantiene el PATH ORIGINAL agrupado en el centro -> bit-idéntico; el cálculo
+    // de abajo no consume el RNG de build). ---
+    if (m.farm_raster.empty())
+        m.n_farms = std::max(1, params.farms_x * params.farms_y);
+    std::vector<long> farm_cells(m.n_farms, 0);
+    m.farm_casco.assign(m.n_farms, {params.width / 2.0, params.height / 2.0});
+    {
+        std::vector<double> sx(m.n_farms, 0), sy(m.n_farms, 0);
+        int cols = std::max(1, (int)(params.width / 30.0)), rows = std::max(1, (int)(params.height / 30.0));
+        for (int r = 0; r < rows; ++r) for (int c = 0; c < cols; ++c) {
+            double x = (c + 0.5) * 30.0, y = (r + 0.5) * 30.0; int f = m.farm_of(x, y);
+            if (f >= 0 && f < m.n_farms) { sx[f] += x; sy[f] += y; farm_cells[f]++; }
+        }
+        for (int f = 0; f < m.n_farms; ++f) if (farm_cells[f] > 0) m.farm_casco[f] = {sx[f] / farm_cells[f], sy[f] / farm_cells[f]};
+    }
+    // Reparto acumulado proporcional al área: a qué granja va el agente k de n (geom.,
+    // no consume RNG). Con n_farms<=1 devuelve 0 -> el camino original no cambia.
+    auto farm_of_k = [&](int k, int n) -> int {
+        if (m.n_farms <= 1) return 0;
+        long T = 0; for (long c : farm_cells) T += c; if (T <= 0) return 0;
+        double target = ((double)k + 0.5) / (double)n * (double)T, acc = 0;
+        for (int f = 0; f < m.n_farms; ++f) { acc += (double)farm_cells[f]; if (target < acc) return f; }
+        return m.n_farms - 1;
+    };
+
     double fcx = params.width / 2.0, fcy = params.height / 2.0;
-    std::vector<int> adult_ids;
+    std::vector<int> adult_ids;                           // (n_farms==1)
+    std::vector<std::vector<int>> adult_ids_f;            // (n_farms>1) por granja
+    if (m.n_farms > 1) adult_ids_f.resize(m.n_farms);
     for (int k = 0; k < n_adults; ++k) {
+        int f = farm_of_k(k, n_adults);
+        double ax = (m.n_farms > 1) ? m.farm_casco[f].first  : fcx;
+        double ay = (m.n_farms > 1) ? m.farm_casco[f].second : fcy;
         Animal a{}; a.species = SHEEP; a.alive = true; a.energy = 100; a.mother = -1;
-        a.x = clampd(fcx + rng_build.range(-300, 300), 0, params.width); a.y = clampd(fcy + rng_build.range(-300, 300), 0, params.height);
+        a.x = clampd(ax + rng_build.range(-300, 300), 0, params.width); a.y = clampd(ay + rng_build.range(-300, 300), 0, params.height);
         a.age_days = rng_build.range(365, 2000); a.vulnerability = SHEEP_ADULT_VULN;
-        adult_ids.push_back((int)m.agents.size()); m.agents.push_back(a);
+        int gid = (int)m.agents.size();
+        if (m.n_farms > 1) adult_ids_f[f].push_back(gid); else adult_ids.push_back(gid);
+        m.agents.push_back(a);
     }
     for (int k = 0; k < n_lambs; ++k) {
-        int mother = adult_ids.empty() ? -1 : adult_ids[(int)rng_build.range(0, (double)adult_ids.size())];
-        double bx = fcx, by = fcy; if (mother >= 0) { bx = m.agents[mother].x; by = m.agents[mother].y; }
+        int f = farm_of_k(k, n_lambs);
+        std::vector<int>& ids = (m.n_farms > 1) ? adult_ids_f[f] : adult_ids;
+        int mother = ids.empty() ? -1 : ids[(int)rng_build.range(0, (double)ids.size())];
+        double bx = (m.n_farms > 1) ? m.farm_casco[f].first : fcx;
+        double by = (m.n_farms > 1) ? m.farm_casco[f].second : fcy;
+        if (mother >= 0) { bx = m.agents[mother].x; by = m.agents[mother].y; }
         Animal a{}; a.species = SHEEP; a.alive = true; a.is_lamb = true; a.energy = 70; a.mother = mother;
         a.x = clampd(bx + rng_build.range(-20, 20), 0, params.width); a.y = clampd(by + rng_build.range(-20, 20), 0, params.height);
         a.age_days = rng_build.range(0, 30); a.vulnerability = LAMB_VULN;
@@ -1197,28 +1236,17 @@ static void build_model(const Params& params, uint64_t seed, Model& m,
     }
     for (int k = 0; k < params.n_dogs; ++k) {
         double a0 = rng_build.range(0.0, TAU);
+        double dcx = fcx, dcy = fcy;                       // n_farms>1: un perro por granja (round-robin) en su casco
+        if (m.n_farms > 1) { int f = k % m.n_farms; dcx = m.farm_casco[f].first; dcy = m.farm_casco[f].second; }
         Animal a{}; a.species = DOG; a.alive = true; a.energy = 100; a.mother = -1;
-        a.x = clampd(fcx + std::cos(a0) * 300.0, 0, params.width); a.y = clampd(fcy + std::sin(a0) * 300.0, 0, params.height);
-        a.patrol_cx = fcx; a.patrol_cy = fcy;
+        a.x = clampd(dcx + std::cos(a0) * 300.0, 0, params.width); a.y = clampd(dcy + std::sin(a0) * 300.0, 0, params.height);
+        a.patrol_cx = dcx; a.patrol_cy = dcy;
         m.agents.push_back(a);
     }
-    // Granjas: particion (sintetica por grilla si no hay raster real) y asignacion
-    // de la granja de origen a las especies cercadas. Con 1x1 -> n_farms=1, inerte.
-    m.n_farms = std::max(1, params.farms_x * params.farms_y);
+    // Granja de origen de las especies cercadas, según su posición de creación
+    // (n_farms y cascos ya se fijaron arriba). Con n_farms<=1 queda farm=0.
     for (auto& a : m.agents)
         if (a.species == SHEEP || a.species == DOG) a.farm = m.farm_of(a.x, a.y);
-    // Cascos: centroide geométrico de cada granja (ancla de la cacería). Muestreo
-    // del dominio a 30 m; sirve igual para la partición sintética y para un ráster real.
-    m.farm_casco.assign(m.n_farms, {params.width / 2.0, params.height / 2.0});
-    {
-        std::vector<double> sx(m.n_farms, 0), sy(m.n_farms, 0); std::vector<long> cnt(m.n_farms, 0);
-        int cols = std::max(1, (int)(params.width / 30.0)), rows = std::max(1, (int)(params.height / 30.0));
-        for (int r = 0; r < rows; ++r) for (int c = 0; c < cols; ++c) {
-            double x = (c + 0.5) * 30.0, y = (r + 0.5) * 30.0; int f = m.farm_of(x, y);
-            if (f >= 0 && f < m.n_farms) { sx[f] += x; sy[f] += y; cnt[f]++; }
-        }
-        for (int f = 0; f < m.n_farms; ++f) if (cnt[f] > 0) m.farm_casco[f] = {sx[f] / cnt[f], sy[f] / cnt[f]};
-    }
 
     phaseA.clear(); phaseB.clear(); foxidx.clear();
     for (size_t k = 0; k < m.agents.size(); ++k) {
@@ -1226,6 +1254,33 @@ static void build_model(const Params& params, uint64_t seed, Model& m,
         if (sp == SHEEP || sp == HARE) phaseA.push_back((int)k); else phaseB.push_back((int)k);
         if (sp == FOX) foxidx.push_back((int)k);
     }
+}
+
+// Carga un raster de granjas (formato simple: "cols rows cellsize" seguido de
+// cols*rows ids de granja, row-major, fila 0 = sur). Fija farm_raster, dimensiones
+// y n_farms del modelo. Llamar ANTES de build_model; el driver ademas fija
+// params.width/height = cols*csz x rows*csz. Devuelve false si no pudo leerlo
+// (path nulo o error) -> el motor sigue con la particion por defecto.
+static bool load_farm_raster(Model& m, const char* path) {
+    if (!path) return false;
+    FILE* fp = std::fopen(path, "r");
+    if (!fp) { std::fprintf(stderr, "load_farm_raster: no pude abrir %s\n", path); return false; }
+    int cols = 0, rows = 0; double csz = 0.0;
+    if (std::fscanf(fp, "%d %d %lf", &cols, &rows, &csz) != 3 || cols <= 0 || rows <= 0 || csz <= 0.0) {
+        std::fprintf(stderr, "load_farm_raster: cabecera invalida en %s\n", path); std::fclose(fp); return false;
+    }
+    std::vector<int> data((size_t)cols * rows); int maxid = -1;
+    for (size_t i = 0; i < data.size(); ++i) {
+        if (std::fscanf(fp, "%d", &data[i]) != 1) {
+            std::fprintf(stderr, "load_farm_raster: faltan datos en %s (celda %zu de %zu)\n", path, i, data.size());
+            std::fclose(fp); return false;
+        }
+        if (data[i] > maxid) maxid = data[i];
+    }
+    std::fclose(fp);
+    m.farm_cols = cols; m.farm_rows = rows; m.farm_csz = csz;
+    m.farm_raster = std::move(data); m.n_farms = maxid + 1;
+    return true;
 }
 
 #endif // SIGRID_CORE_HPP

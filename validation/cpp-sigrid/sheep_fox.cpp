@@ -16,10 +16,15 @@
 //                [--fox-density D] [--fox-eff E] [--lamb-prop P]
 #include "sigrid_core.hpp"
 
-static double run_loss_rate(const Params& params, uint64_t seed, uint64_t n_days, long& killed, long& attempts) {
+static double run_loss_rate(const Params& params_in, uint64_t seed, uint64_t n_days, long& killed, long& attempts) {
     // Construcción de la población (fuente única en sigrid_core.hpp): agentes,
     // rasters, y las listas de fase A (ovejas/liebres) / fase B (zorros/perros).
+    Params params = params_in;   // copia modificable: el raster real fija width/height
     Model m; std::vector<int> phaseA, phaseB, foxidx;
+    if (load_farm_raster(m, params.farm_raster_path)) {
+        params.width  = m.farm_cols * m.farm_csz;
+        params.height = m.farm_rows * m.farm_csz;
+    }
     build_model(params, seed, m, phaseA, phaseB, foxidx);
     // Buffers reusados para la detección de zorros precomputada (Hito 4b).
     std::vector<std::vector<int>> fdprey(m.agents.size());
@@ -71,6 +76,8 @@ static double run_loss_rate(const Params& params, uint64_t seed, uint64_t n_days
 int main(int argc, char** argv) {
     Params p; uint64_t days = 30, seed0 = 1000, n_seeds = 1;
     auto darg = [&](const char* n, double dv) -> double { for (int i = 1; i < argc - 1; ++i) if (!std::strcmp(argv[i], n)) return std::atof(argv[i + 1]); return dv; };
+    auto sarg = [&](const char* n) -> const char* { for (int i = 1; i < argc - 1; ++i) if (!std::strcmp(argv[i], n)) return argv[i + 1]; return nullptr; };
+    p.farm_raster_path = sarg("--farm-raster");   // raster real de granjas (fija el dominio)
     days = (uint64_t)darg("--days", 30); seed0 = (uint64_t)darg("--seed", 1000); n_seeds = (uint64_t)darg("--seeds", 1);
     p.sheep_density = darg("--sheep-density", p.sheep_density);
     p.fox_density = darg("--fox-density", p.fox_density);
