@@ -18,6 +18,7 @@ fn layers_plano(width: usize, height: usize, slope_frac: f32) -> Layers {
         sediment: Grid2D::fill(width, height, 1.0),
         susceptibility: Grid2D::fill(width, height, 1.0),
         streams: Grid2D::fill(width, height, 0.0),
+        trigger: None,
     }
 }
 

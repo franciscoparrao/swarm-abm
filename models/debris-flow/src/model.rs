@@ -76,6 +76,14 @@ pub struct Params {
     pub seeding_power: f64,
     /// Física enriquecida opcional (entrainment, Voellmy, inercia).
     /// `None` ⇒ modelo base (paridad con el original).
+    /// Escala del volumen inicial en el modo de gatillo externo
+    /// ([`Layers::trigger`]): el flujo nace con `trigger_volume_scale * E`.
+    /// El default replica la escala del modo lluvia (`rain * 2`) con la
+    /// exceedancia en lugar de la intensidad; es un **parámetro libre que hay
+    /// que calibrar** si se usa ese modo. Sin efecto cuando `trigger` es
+    /// `None`, y por eso no entra en [`PARAM_DIMS`] ni en
+    /// [`PARAM_DIMS_CHANARAL`] (no altera el espacio de búsqueda vigente).
+    pub trigger_volume_scale: f64,
     pub enhanced: Option<EnhancedPhysics>,
 }
 
@@ -130,6 +138,7 @@ impl Default for Params {
             stochastic_temperature: 0.284_740_340_530_182_05,
             footprint_radius: 4.0,
             seeding_power: 0.0,
+            trigger_volume_scale: 2.0,
             enhanced: None,
         }
     }
@@ -162,6 +171,7 @@ impl Params {
             stochastic_temperature: 0.0,
             footprint_radius: 4.0,
             seeding_power: 0.0,
+            trigger_volume_scale: 2.0,
             enhanced: None,
         }
     }
@@ -197,6 +207,7 @@ impl Params {
             stochastic_temperature: 0.020_193_507_448_305_392,
             footprint_radius: 4.0,
             seeding_power: 0.0,
+            trigger_volume_scale: 2.0,
             enhanced: None,
         }
     }
@@ -231,6 +242,7 @@ impl Params {
             stochastic_temperature: 0.0,
             footprint_radius: 4.0,
             seeding_power: 0.0,
+            trigger_volume_scale: 2.0,
             enhanced: None,
         }
     }
@@ -259,6 +271,7 @@ impl Params {
             coastal_volume_threshold: 0.106_327_614_505_500_66,
             coastal_slope_threshold: 0.026_340_470_362_909_78,
             seeding_power: 0.376_231_768_153_495_24,
+            trigger_volume_scale: 2.0,
             enhanced: Some(EnhancedPhysics {
                 entrainment_coef: 0.105_111_743_082_086_8,
                 erosion_slope_threshold: 0.206_150_474_749_992_04,
@@ -524,10 +537,27 @@ pub struct Layers {
     pub sediment: Grid2D<f32>,
     pub susceptibility: Grid2D<f32>,
     pub streams: Grid2D<f32>,
+    /// Gatillo externo opcional: una grilla **por hora de simulación** con la
+    /// exceedancia `E` del umbral que decida el llamador (p. ej. una curva
+    /// intensidad–duración). El índice 0 es la **primera hora simulada**
+    /// (`hour == 1`), así que el vector debe tener tantas grillas como horas
+    /// se vayan a simular; las horas más allá de su largo no generan flujos.
+    ///
+    /// Si está presente **reemplaza** la regla `rain > rain_threshold`: un
+    /// flujo nace solo donde y cuando `E >= 1`, con volumen
+    /// `trigger_volume_scale * E` (creciente en `E`). Las compuertas de
+    /// terreno (sedimento, isoterma, susceptibilidad) siguen aplicando, y
+    /// `NaN >= 1` es `false`, igual que el resto del modelo.
+    ///
+    /// `None` ⇒ comportamiento idéntico al modo lluvia (paridad con las
+    /// calibraciones de Copiapó y Chañaral).
+    pub trigger: Option<Vec<Grid2D<f32>>>,
 }
 
 /// Patrón horario de desagregación de la lluvia diaria (día → (hora, fracción)).
-const HOURLY_PATTERNS: [&[(u64, f64)]; 3] = [
+/// Público para que quien construya una capa [`Layers::trigger`] pueda alinear
+/// su desagregación temporal con la del modo lluvia si así lo quiere.
+pub const HOURLY_PATTERNS: [&[(u64, f64)]; 3] = [
     &[(6, 0.70), (7, 0.30)],
     &[(4, 0.40), (5, 0.30), (12, 0.20), (18, 0.10)],
     &[(2, 0.50), (8, 0.30), (14, 0.20)],
@@ -757,10 +787,31 @@ impl Agent for DebrisAgent {
 
 impl Raindrop {
     fn step(&mut self, model: &mut DebrisFlowModel) {
-        let rain = self.hourly_rain(model);
-        if rain > model.params.rain_threshold && self.can_generate_flow(model) {
-            model.spawn_flow(self.pos, rain * 2.0, 0.0, false);
+        // Con gatillo externo manda la exceedancia del llamador; sin él, la
+        // regla de lluvia original. El volumen se calcula en la misma rama
+        // para soltar el préstamo de `model` antes de `spawn_flow`.
+        let (gatilla, volumen) = match model.layers.trigger.as_ref() {
+            Some(trigger) => {
+                let e = self.exceedance(trigger, model.hour);
+                (e >= 1.0, model.params.trigger_volume_scale * e)
+            }
+            None => {
+                let rain = self.hourly_rain(model);
+                (rain > model.params.rain_threshold, rain * 2.0)
+            }
+        };
+        if gatilla && self.can_generate_flow(model) {
+            model.spawn_flow(self.pos, volumen, 0.0, false);
         }
+    }
+
+    /// Exceedancia del gatillo externo en esta celda y esta hora. `hour` es
+    /// 1-based, así que la primera hora simulada lee el índice 0. Fuera del
+    /// rango del vector devuelve 0 (no gatilla).
+    fn exceedance(&self, trigger: &[Grid2D<f32>], hour: u64) -> f64 {
+        trigger
+            .get(hour.saturating_sub(1) as usize)
+            .map_or(0.0, |g| f64::from(g[self.pos]))
     }
 
     fn hourly_rain(&self, model: &DebrisFlowModel) -> f64 {
@@ -1245,5 +1296,119 @@ fn metrics_from_counts(tp: u64, fp: u64, fneg: u64, gt_total: u64, pixel_size: f
         f1,
         area_pred_km2: (tp + fp) as f64 * km2,
         area_gt_km2: gt_total as f64 * km2,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Stack mínimo con lluvia 0: así cualquier flujo que aparezca viene del
+    /// gatillo externo y no de la regla de lluvia.
+    fn layers_sinteticas(sediment: f32) -> Layers {
+        let (w, h) = (8, 8);
+        Layers {
+            dem: Grid2D::fill(w, h, 100.0),
+            slope: Grid2D::fill(w, h, 0.5),
+            rain: vec![Grid2D::fill(w, h, 0.0); 3],
+            isotherm: Grid2D::fill(w, h, 1.0),
+            sediment: Grid2D::fill(w, h, sediment),
+            susceptibility: Grid2D::fill(w, h, 1.0),
+            streams: Grid2D::fill(w, h, 0.0),
+            trigger: None,
+        }
+    }
+
+    /// Modelo sin agentes de lluvia propios (los pone el test) en la hora dada.
+    fn modelo(layers: Layers, hour: u64) -> DebrisFlowModel {
+        let params = Params {
+            n_rain_agents: 0,
+            sediment_threshold: 0.3,
+            susceptibility_threshold: 0.3,
+            ..Params::default()
+        };
+        let mut m = DebrisFlowModel::new(Arc::new(layers), params, 10.0, 7);
+        m.hour = hour;
+        m
+    }
+
+    /// Gatilla una gota en el centro y devuelve los volúmenes de los flujos
+    /// que nacieron.
+    fn volumenes_tras_gota(mut m: DebrisFlowModel) -> Vec<f64> {
+        let mut gota = Raindrop {
+            pos: Pos::new(4, 4),
+        };
+        gota.step(&mut m);
+        m.agents
+            .iter()
+            .filter_map(|(_, a)| match a {
+                DebrisAgent::Flow(f) => Some(f.volume),
+                DebrisAgent::Raindrop(_) => None,
+            })
+            .collect()
+    }
+
+    fn con_trigger(sediment: f32, exceedancias: &[f32]) -> Layers {
+        let mut l = layers_sinteticas(sediment);
+        l.trigger = Some(
+            exceedancias
+                .iter()
+                .map(|&e| Grid2D::fill(8, 8, e))
+                .collect(),
+        );
+        l
+    }
+
+    #[test]
+    fn sin_trigger_y_sin_lluvia_no_nace_nada() {
+        let m = modelo(layers_sinteticas(1.0), 1);
+        assert!(volumenes_tras_gota(m).is_empty());
+    }
+
+    #[test]
+    fn exceedancia_bajo_uno_no_gatilla() {
+        let m = modelo(con_trigger(1.0, &[0.99]), 1);
+        assert!(volumenes_tras_gota(m).is_empty());
+    }
+
+    #[test]
+    fn exceedancia_sobre_uno_gatilla_con_volumen_creciente() {
+        // E = 1 es el borde inclusivo; el volumen es trigger_volume_scale * E.
+        let v1 = volumenes_tras_gota(modelo(con_trigger(1.0, &[1.0]), 1));
+        let v2 = volumenes_tras_gota(modelo(con_trigger(1.0, &[2.0]), 1));
+        let v3 = volumenes_tras_gota(modelo(con_trigger(1.0, &[3.0]), 1));
+        assert_eq!(v1, vec![2.0]);
+        assert_eq!(v2, vec![4.0]);
+        assert_eq!(v3, vec![6.0]);
+        assert!(v1[0] < v2[0] && v2[0] < v3[0]);
+    }
+
+    #[test]
+    fn las_compuertas_de_terreno_siguen_aplicando() {
+        // Sedimento bajo el umbral: por mucha exceedancia que haya, no nace.
+        let m = modelo(con_trigger(0.0, &[50.0]), 1);
+        assert!(volumenes_tras_gota(m).is_empty());
+    }
+
+    #[test]
+    fn el_indice_cero_es_la_primera_hora_simulada() {
+        // Vector de 2 horas: gatillo solo en la primera.
+        assert_eq!(
+            volumenes_tras_gota(modelo(con_trigger(1.0, &[2.0, 0.0]), 1)),
+            vec![4.0]
+        );
+        assert!(volumenes_tras_gota(modelo(con_trigger(1.0, &[2.0, 0.0]), 2)).is_empty());
+    }
+
+    #[test]
+    fn hora_fuera_del_rango_no_gatilla() {
+        let m = modelo(con_trigger(1.0, &[5.0, 5.0]), 3);
+        assert!(volumenes_tras_gota(m).is_empty());
+    }
+
+    #[test]
+    fn nan_en_el_gatillo_no_gatilla() {
+        let m = modelo(con_trigger(1.0, &[f32::NAN]), 1);
+        assert!(volumenes_tras_gota(m).is_empty());
     }
 }

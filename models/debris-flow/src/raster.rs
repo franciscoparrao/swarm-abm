@@ -82,6 +82,7 @@ pub fn load(dir: &Path) -> io::Result<CopiapoData> {
             sediment: g("sediment")?,
             susceptibility: g("susceptibility")?,
             streams: g("streams")?,
+            trigger: None,
         },
         ground_truth: g("ground_truth")?,
         bbox,
