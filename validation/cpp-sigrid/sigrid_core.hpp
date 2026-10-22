@@ -602,8 +602,12 @@ static void step_sheep(Model& m, int i, PRng& rng) {
             double graze_r = m.dog_positions.empty() ? SHEEP_PERCEPTION_RADIUS : std::max(SHEEP_PERCEPTION_RADIUS, 500.0);
             m.grid.within(s.x, s.y, graze_r, [&](const Snap& sn, double d) {
                 if (!sn.alive) return;
-                if (sn.species == SHEEP && d <= SHEEP_PERCEPTION_RADIUS) { cx += sn.x; cy += sn.y; n += 1; }
-                if (sn.species == DOG && d < dog_best) { dog_best = d; dgx = sn.x; dgy = sn.y; } });
+                // Cohesión y atracción al perro, solo dentro de la propia granja (una
+                // oveja no se agrupa a través de un cerco). El zorro del que huye NO
+                // se filtra (los zorros cruzan predios). Con n_farms<=1 -> bit-idéntico.
+                bool same_farm = (m.n_farms <= 1) || (m.farm_of(sn.x, sn.y) == s.farm);
+                if (sn.species == SHEEP && d <= SHEEP_PERCEPTION_RADIUS && same_farm) { cx += sn.x; cy += sn.y; n += 1; }
+                if (sn.species == DOG && d < dog_best && same_farm) { dog_best = d; dgx = sn.x; dgy = sn.y; } });
             double vcx = 0, vcy = 0;
             // NO normalizar: en el Python get_flocking_vectors() devuelve el vector
             // COMPLETO hacia el centro del grupo, cuya magnitud es la distancia al
