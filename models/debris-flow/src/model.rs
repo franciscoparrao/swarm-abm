@@ -47,6 +47,7 @@ pub enum Physics {
 /// Parámetros del modelo. `Default` = calibración Optuna-TPE con temperatura
 /// (Copiapó, `best_params_optuna_withT.json`, IoU de referencia 0.1344).
 #[derive(Debug, Clone)]
+#[non_exhaustive]
 pub struct Params {
     /// Variante física (regla de selección, radio, velocidad).
     pub physics: Physics,
@@ -84,7 +85,39 @@ pub struct Params {
     /// `None`, y por eso no entra en [`PARAM_DIMS`] ni en
     /// [`PARAM_DIMS_CHANARAL`] (no altera el espacio de búsqueda vigente).
     pub trigger_volume_scale: f64,
+    /// Muestreo de gotas en el modo de gatillo externo. Ver [`TriggerSeeding`].
+    /// Sin efecto cuando `trigger` es `None`.
+    pub trigger_seeding: TriggerSeeding,
+    /// Gotas por km² de área excedida (`E >= 1`) y por hora, en
+    /// [`TriggerSeeding::FollowField`]. El default (0.02) reproduce la densidad
+    /// del modo fijo cuando todo el dominio excede: 100 gotas sobre los ~6070
+    /// km² del stack de Chañaral, 50 sobre los ~2730 de Copiapó. **Sin
+    /// calibrar.**
+    pub trigger_drops_per_km2: f64,
+    /// Tope de gotas por hora en [`TriggerSeeding::FollowField`]. **Sin calibrar.**
+    pub trigger_max_drops: usize,
     pub enhanced: Option<EnhancedPhysics>,
+}
+
+/// Cómo se eligen las gotas (celdas que pueden iniciar un flujo) cuando hay
+/// una capa [`Layers::trigger`]. Sin esa capa no tiene efecto: las gotas son
+/// siempre la muestra fija de `n_rain_agents` colocada al inicio.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum TriggerSeeding {
+    /// Muestra fija de `n_rain_agents`, colocada al inicio igual que en el
+    /// modo lluvia; cada gota dispara en las horas en que su celda tiene
+    /// `E >= 1`. Sirve para aislar el efecto del volumen: el área gatillada
+    /// no cambia cuántas celdas pueden iniciar, así que la huella se satura
+    /// cuando el área excedida cubre todas las gotas.
+    Fixed,
+    /// Cada hora se muestrean gotas nuevas entre las celdas con `E >= 1` que
+    /// pasan las compuertas de terreno, ponderadas por
+    /// `susceptibilidad^seeding_power · E`, en número
+    /// `trigger_drops_per_km2 × área excedida` con tope `trigger_max_drops`.
+    /// El área en alerta controla cuántos flujos nacen; la susceptibilidad y
+    /// la exceedancia, dónde. No se crean agentes de lluvia fijos.
+    FollowField,
 }
 
 /// Términos físicos adicionales, calibrables. Cada uno se reduce al modelo
@@ -139,6 +172,9 @@ impl Default for Params {
             footprint_radius: 4.0,
             seeding_power: 0.0,
             trigger_volume_scale: 2.0,
+            trigger_seeding: TriggerSeeding::FollowField,
+            trigger_drops_per_km2: 0.02,
+            trigger_max_drops: 1000,
             enhanced: None,
         }
     }
@@ -172,6 +208,9 @@ impl Params {
             footprint_radius: 4.0,
             seeding_power: 0.0,
             trigger_volume_scale: 2.0,
+            trigger_seeding: TriggerSeeding::FollowField,
+            trigger_drops_per_km2: 0.02,
+            trigger_max_drops: 1000,
             enhanced: None,
         }
     }
@@ -208,6 +247,9 @@ impl Params {
             footprint_radius: 4.0,
             seeding_power: 0.0,
             trigger_volume_scale: 2.0,
+            trigger_seeding: TriggerSeeding::FollowField,
+            trigger_drops_per_km2: 0.02,
+            trigger_max_drops: 1000,
             enhanced: None,
         }
     }
@@ -243,6 +285,9 @@ impl Params {
             footprint_radius: 4.0,
             seeding_power: 0.0,
             trigger_volume_scale: 2.0,
+            trigger_seeding: TriggerSeeding::FollowField,
+            trigger_drops_per_km2: 0.02,
+            trigger_max_drops: 1000,
             enhanced: None,
         }
     }
@@ -272,6 +317,9 @@ impl Params {
             coastal_slope_threshold: 0.026_340_470_362_909_78,
             seeding_power: 0.376_231_768_153_495_24,
             trigger_volume_scale: 2.0,
+            trigger_seeding: TriggerSeeding::FollowField,
+            trigger_drops_per_km2: 0.02,
+            trigger_max_drops: 1000,
             enhanced: Some(EnhancedPhysics {
                 entrainment_coef: 0.105_111_743_082_086_8,
                 erosion_slope_threshold: 0.206_150_474_749_992_04,
@@ -528,6 +576,7 @@ pub fn params_chanaral_from_genes(x: &[f64]) -> Params {
 
 /// Capas raster de entrada (todas alineadas a la misma grilla).
 #[derive(Clone)]
+#[non_exhaustive]
 pub struct Layers {
     pub dem: Grid2D<f32>,
     pub slope: Grid2D<f32>,
@@ -552,6 +601,68 @@ pub struct Layers {
     /// `None` ⇒ comportamiento idéntico al modo lluvia (paridad con las
     /// calibraciones de Copiapó y Chañaral).
     pub trigger: Option<Vec<Grid2D<f32>>>,
+}
+
+impl Layers {
+    /// Construye el stack sin capa de gatillo. Todas las grillas deben tener
+    /// las dimensiones del DEM (se verifica). Es el constructor estable para
+    /// crates externos: `Layers` es `#[non_exhaustive]`, así que un campo
+    /// nuevo no rompe a quien lo use.
+    #[must_use]
+    pub fn new(
+        dem: Grid2D<f32>,
+        slope: Grid2D<f32>,
+        rain: Vec<Grid2D<f32>>,
+        isotherm: Grid2D<f32>,
+        sediment: Grid2D<f32>,
+        susceptibility: Grid2D<f32>,
+        streams: Grid2D<f32>,
+    ) -> Self {
+        let (w, h) = (dem.width(), dem.height());
+        let misma = |g: &Grid2D<f32>, nombre: &str| {
+            assert!(
+                g.width() == w && g.height() == h,
+                "capa `{nombre}`: {}x{} no coincide con el DEM {w}x{h}",
+                g.width(),
+                g.height()
+            );
+        };
+        misma(&slope, "slope");
+        for g in &rain {
+            misma(g, "rain");
+        }
+        misma(&isotherm, "isotherm");
+        misma(&sediment, "sediment");
+        misma(&susceptibility, "susceptibility");
+        misma(&streams, "streams");
+        Self {
+            dem,
+            slope,
+            rain,
+            isotherm,
+            sediment,
+            susceptibility,
+            streams,
+            trigger: None,
+        }
+    }
+
+    /// Agrega la capa de gatillo externo: una grilla por hora simulada, con el
+    /// índice 0 en la primera hora. Verifica dimensiones.
+    #[must_use]
+    pub fn with_trigger(mut self, trigger: Vec<Grid2D<f32>>) -> Self {
+        let (w, h) = (self.dem.width(), self.dem.height());
+        for (i, g) in trigger.iter().enumerate() {
+            assert!(
+                g.width() == w && g.height() == h,
+                "trigger[{i}]: {}x{} no coincide con el DEM {w}x{h}",
+                g.width(),
+                g.height()
+            );
+        }
+        self.trigger = Some(trigger);
+        self
+    }
 }
 
 /// Patrón horario de desagregación de la lluvia diaria (día → (hora, fracción)).
@@ -648,6 +759,12 @@ impl DebrisFlowModel {
             disc,
         };
 
+        // Con las gotas siguiendo al campo de gatillo no hay agentes de
+        // lluvia fijos: se muestrean cada hora en `before_step`.
+        if model.follows_trigger() {
+            return model;
+        }
+
         // Agentes de lluvia en celdas válidas distintas.
         let mut rng = rng_from_seed(seed ^ 0xDEB1_5F10);
         let mut usadas = std::collections::HashSet::new();
@@ -679,6 +796,95 @@ impl DebrisFlowModel {
             }
         }
         model
+    }
+
+    /// ¿Las gotas siguen al campo de gatillo? Solo con capa de gatillo y
+    /// [`TriggerSeeding::FollowField`].
+    fn follows_trigger(&self) -> bool {
+        self.layers.trigger.is_some() && self.params.trigger_seeding == TriggerSeeding::FollowField
+    }
+
+    /// Compuertas de terreno para iniciar un flujo en `pos`: sedimento,
+    /// isoterma y susceptibilidad sobre sus umbrales. `NaN > x` es `false`:
+    /// equivale a los checks `isnan` del original.
+    fn terrain_allows(&self, pos: Pos) -> bool {
+        let p = &self.params;
+        f64::from(self.layers.sediment[pos]) > p.sediment_threshold
+            && f64::from(self.layers.isotherm[pos]) > 0.5
+            && f64::from(self.layers.susceptibility[pos]) > p.susceptibility_threshold
+    }
+
+    /// Peso de muestreo de una celda candidata: `susceptibilidad^seeding_power · E`.
+    fn drop_weight(&self, pos: Pos, e: f64) -> f64 {
+        let sus = f64::from(self.layers.susceptibility[pos]).clamp(0.0, 1.0);
+        sus.powf(self.params.seeding_power) * e
+    }
+
+    /// Gotas de la hora actual siguiendo el campo de gatillo
+    /// ([`TriggerSeeding::FollowField`]). Dos pasadas sobre la grilla de la
+    /// hora, en orden fila-mayor (determinista):
+    /// 1. área excedida (`E >= 1`) y suma de pesos de las candidatas (las
+    ///    excedidas que además pasan las compuertas de terreno);
+    /// 2. muestreo proporcional al peso: `k` objetivos uniformes e
+    ///    independientes sobre el peso acumulado, ordenados, y un flujo cada
+    ///    vez que el acumulado cruza el siguiente objetivo. Varios objetivos
+    ///    en una misma celda producen un solo flujo, así que `k` es un máximo
+    ///    (se alcanza cuando las candidatas son muchas más que `k`).
+    ///
+    /// No aloca nada proporcional al dominio: solo los `k` objetivos. El
+    /// volumen es `trigger_volume_scale * E`, igual que en el modo fijo.
+    fn seed_from_trigger(&mut self, rng: &mut SimRng) {
+        let layers = Arc::clone(&self.layers);
+        let Some(grid) = layers
+            .trigger
+            .as_ref()
+            .and_then(|t| t.get(self.hour.saturating_sub(1) as usize))
+        else {
+            return;
+        };
+
+        let mut n_excedidas = 0usize;
+        let mut peso_total = 0.0_f64;
+        for (pos, &e) in grid.iter() {
+            let e = f64::from(e);
+            if e >= 1.0 {
+                n_excedidas += 1;
+                if self.terrain_allows(pos) {
+                    peso_total += self.drop_weight(pos, e);
+                }
+            }
+        }
+        if n_excedidas == 0 || peso_total <= 0.0 || !peso_total.is_finite() {
+            return;
+        }
+        let area_km2 = n_excedidas as f64 * self.pixel_size * self.pixel_size / 1e6;
+        let k = ((self.params.trigger_drops_per_km2 * area_km2).round() as usize)
+            .min(self.params.trigger_max_drops);
+        if k == 0 {
+            return;
+        }
+        let mut objetivos: Vec<f64> = (0..k).map(|_| rng.random_range(0.0..peso_total)).collect();
+        objetivos.sort_by(f64::total_cmp);
+
+        let escala = self.params.trigger_volume_scale;
+        let mut acumulado = 0.0_f64;
+        let mut siguiente = 0usize;
+        for (pos, &e) in grid.iter() {
+            let e = f64::from(e);
+            if e < 1.0 || !self.terrain_allows(pos) {
+                continue;
+            }
+            acumulado += self.drop_weight(pos, e);
+            if siguiente < k && objetivos[siguiente] < acumulado {
+                self.spawn_flow(pos, escala * e, 0.0, false);
+                while siguiente < k && objetivos[siguiente] < acumulado {
+                    siguiente += 1;
+                }
+                if siguiente >= k {
+                    break;
+                }
+            }
+        }
     }
 
     /// Radio del footprint de un flujo según su volumen y la física.
@@ -758,8 +964,11 @@ impl Model for DebrisFlowModel {
         &mut self.agents
     }
 
-    fn before_step(&mut self, _rng: &mut SimRng) {
+    fn before_step(&mut self, rng: &mut SimRng) {
         self.hour += 1;
+        if self.follows_trigger() {
+            self.seed_from_trigger(rng);
+        }
     }
 
     fn after_step(&mut self, _rng: &mut SimRng) {
@@ -832,14 +1041,7 @@ impl Raindrop {
     }
 
     fn can_generate_flow(&self, model: &DebrisFlowModel) -> bool {
-        let p = &model.params;
-        let sediment = f64::from(model.layers.sediment[self.pos]);
-        let isotherm = f64::from(model.layers.isotherm[self.pos]);
-        let susceptibility = f64::from(model.layers.susceptibility[self.pos]);
-        // NaN > x es false: equivale a los checks isnan del original.
-        sediment > p.sediment_threshold
-            && isotherm > 0.5
-            && susceptibility > p.susceptibility_threshold
+        model.terrain_allows(self.pos)
     }
 }
 
@@ -1307,29 +1509,73 @@ mod tests {
     /// gatillo externo y no de la regla de lluvia.
     fn layers_sinteticas(sediment: f32) -> Layers {
         let (w, h) = (8, 8);
-        Layers {
-            dem: Grid2D::fill(w, h, 100.0),
-            slope: Grid2D::fill(w, h, 0.5),
-            rain: vec![Grid2D::fill(w, h, 0.0); 3],
-            isotherm: Grid2D::fill(w, h, 1.0),
-            sediment: Grid2D::fill(w, h, sediment),
-            susceptibility: Grid2D::fill(w, h, 1.0),
-            streams: Grid2D::fill(w, h, 0.0),
-            trigger: None,
-        }
+        Layers::new(
+            Grid2D::fill(w, h, 100.0),
+            Grid2D::fill(w, h, 0.5),
+            vec![Grid2D::fill(w, h, 0.0); 3],
+            Grid2D::fill(w, h, 1.0),
+            Grid2D::fill(w, h, sediment),
+            Grid2D::fill(w, h, 1.0),
+            Grid2D::fill(w, h, 0.0),
+        )
     }
 
-    /// Modelo sin agentes de lluvia propios (los pone el test) en la hora dada.
-    fn modelo(layers: Layers, hour: u64) -> DebrisFlowModel {
-        let params = Params {
+    fn params_base() -> Params {
+        // Dentro del crate el literal con `..` sigue permitido.
+        Params {
             n_rain_agents: 0,
             sediment_threshold: 0.3,
             susceptibility_threshold: 0.3,
             ..Params::default()
-        };
+        }
+    }
+
+    /// Modelo sin agentes de lluvia propios (los pone el test) en la hora
+    /// dada, con gotas fijas aunque haya gatillo (los tests de `Raindrop`
+    /// prueban esa rama).
+    fn modelo(layers: Layers, hour: u64) -> DebrisFlowModel {
+        let mut params = params_base();
+        params.trigger_seeding = TriggerSeeding::Fixed;
         let mut m = DebrisFlowModel::new(Arc::new(layers), params, 10.0, 7);
         m.hour = hour;
         m
+    }
+
+    /// Modelo con gotas que siguen al gatillo; píxel de 1000 m ⇒ cada celda
+    /// es 1 km², así que `por_km2` son gotas por celda excedida.
+    fn modelo_follow(layers: Layers, por_km2: f64, tope: usize) -> DebrisFlowModel {
+        let mut params = params_base();
+        params.trigger_drops_per_km2 = por_km2;
+        params.trigger_max_drops = tope;
+        DebrisFlowModel::new(Arc::new(layers), params, 1000.0, 7)
+    }
+
+    /// Avanza una hora (lo que hace `Simulation`) y devuelve (pos, volumen)
+    /// de los flujos vivos.
+    fn flujos_tras_una_hora(mut m: DebrisFlowModel) -> Vec<(Pos, f64)> {
+        let mut rng = rng_from_seed(99);
+        m.before_step(&mut rng);
+        m.agents
+            .iter()
+            .filter_map(|(_, a)| match a {
+                DebrisAgent::Flow(f) => Some((f.pos, f.volume)),
+                DebrisAgent::Raindrop(_) => None,
+            })
+            .collect()
+    }
+
+    fn gotas(m: &DebrisFlowModel) -> usize {
+        m.agents
+            .iter()
+            .filter(|(_, a)| matches!(a, DebrisAgent::Raindrop(_)))
+            .count()
+    }
+
+    /// Gatillo con E distinto a cada lado de `x = 4` (una sola hora).
+    fn trigger_mitades(e_oeste: f32, e_este: f32) -> Layers {
+        layers_sinteticas(1.0).with_trigger(vec![Grid2D::from_fn(8, 8, |p| {
+            if p.x < 4 { e_oeste } else { e_este }
+        })])
     }
 
     /// Gatilla una gota en el centro y devuelve los volúmenes de los flujos
@@ -1410,5 +1656,113 @@ mod tests {
     fn nan_en_el_gatillo_no_gatilla() {
         let m = modelo(con_trigger(1.0, &[f32::NAN]), 1);
         assert!(volumenes_tras_gota(m).is_empty());
+    }
+
+    // ---- gotas que siguen al campo de gatillo (TriggerSeeding::FollowField) ----
+
+    #[test]
+    fn sin_trigger_las_gotas_siguen_siendo_la_muestra_fija() {
+        let mut params = params_base();
+        params.n_rain_agents = 5;
+        let m = DebrisFlowModel::new(Arc::new(layers_sinteticas(1.0)), params, 1000.0, 7);
+        assert_eq!(gotas(&m), 5);
+    }
+
+    #[test]
+    fn follow_field_no_crea_gotas_fijas_y_fixed_si() {
+        let mut params = params_base();
+        params.n_rain_agents = 5;
+        let follow = DebrisFlowModel::new(
+            Arc::new(trigger_mitades(2.0, 2.0)),
+            params.clone(),
+            1000.0,
+            7,
+        );
+        assert_eq!(gotas(&follow), 0);
+        params.trigger_seeding = TriggerSeeding::Fixed;
+        let fixed = DebrisFlowModel::new(Arc::new(trigger_mitades(2.0, 2.0)), params, 1000.0, 7);
+        assert_eq!(gotas(&fixed), 5);
+        // En modo fijo `before_step` no muestrea nada.
+        assert!(flujos_tras_una_hora(fixed).is_empty());
+    }
+
+    #[test]
+    fn follow_field_nace_solo_donde_e_supera_uno_con_volumen_por_e() {
+        // Oeste E = 0.5 (no excede), este E = 2: 32 km² excedidos, 1 gota/km².
+        let flujos = flujos_tras_una_hora(modelo_follow(trigger_mitades(0.5, 2.0), 1.0, 1000));
+        assert!(!flujos.is_empty());
+        assert!(flujos.len() <= 32, "k es un máximo ({})", flujos.len());
+        assert!(
+            flujos.iter().all(|(p, _)| p.x >= 4),
+            "solo en la mitad excedida"
+        );
+        assert!(flujos.iter().all(|(_, v)| *v == 4.0), "volumen = 2.0 * E");
+    }
+
+    #[test]
+    fn follow_field_cuenta_crece_con_el_area_y_respeta_el_tope() {
+        // Mismo E, el doble de área excedida ⇒ más gotas (k = 8 vs 16; con
+        // objetivos independientes puede haber colisiones, por eso es `>`).
+        let mitad =
+            flujos_tras_una_hora(modelo_follow(trigger_mitades(0.5, 2.0), 0.25, 1000)).len();
+        let todo = flujos_tras_una_hora(modelo_follow(trigger_mitades(2.0, 2.0), 0.25, 1000)).len();
+        assert!(mitad >= 1 && todo > mitad, "mitad={mitad} todo={todo}");
+        // Tope: 64 km² × 10 gotas/km² = 640, acotado a 3.
+        let con_tope =
+            flujos_tras_una_hora(modelo_follow(trigger_mitades(2.0, 2.0), 10.0, 3)).len();
+        assert!((1..=3).contains(&con_tope), "con_tope={con_tope}");
+    }
+
+    #[test]
+    fn follow_field_pesa_por_exceedancia() {
+        // Oeste E = 1 (excede justo), este E = 100: el peso del este es 100×.
+        let flujos = flujos_tras_una_hora(modelo_follow(trigger_mitades(1.0, 100.0), 0.25, 1000));
+        let este = flujos.iter().filter(|(p, _)| p.x >= 4).count();
+        let oeste = flujos.len() - este;
+        assert!(este > 3 * oeste, "este={este} oeste={oeste}");
+    }
+
+    #[test]
+    fn follow_field_pesa_por_susceptibilidad() {
+        // Oeste susceptibilidad 0.35 (pasa la compuerta 0.3), este 1.0, con
+        // seeding_power = 4: peso 0.015 vs 1.
+        let mut layers = trigger_mitades(2.0, 2.0);
+        layers.susceptibility = Grid2D::from_fn(8, 8, |p| if p.x < 4 { 0.35 } else { 1.0 });
+        let mut m = modelo_follow(layers, 0.25, 1000);
+        m.params.seeding_power = 4.0;
+        let flujos = flujos_tras_una_hora(m);
+        let este = flujos.iter().filter(|(p, _)| p.x >= 4).count();
+        let oeste = flujos.len() - este;
+        assert!(este > 3 * oeste, "este={este} oeste={oeste}");
+    }
+
+    #[test]
+    fn follow_field_respeta_las_compuertas_de_terreno() {
+        // Sedimento 0 en todo el dominio: excede, pero ninguna celda es candidata.
+        let layers = layers_sinteticas(0.0).with_trigger(vec![Grid2D::fill(8, 8, 5.0)]);
+        assert!(flujos_tras_una_hora(modelo_follow(layers, 10.0, 1000)).is_empty());
+    }
+
+    #[test]
+    fn follow_field_es_determinista() {
+        let correr = || {
+            let mut m = modelo_follow(trigger_mitades(1.5, 3.0), 0.5, 1000);
+            let mut rng = rng_from_seed(5);
+            m.before_step(&mut rng);
+            m.before_step(&mut rng); // segunda hora: sin grilla ⇒ nada nuevo
+            let mut v: Vec<(usize, usize, u64)> = m
+                .agents
+                .iter()
+                .filter_map(|(_, a)| match a {
+                    DebrisAgent::Flow(f) => Some((f.pos.x, f.pos.y, f.volume.to_bits())),
+                    DebrisAgent::Raindrop(_) => None,
+                })
+                .collect();
+            v.sort_unstable();
+            v
+        };
+        let a = correr();
+        assert!(!a.is_empty());
+        assert_eq!(a, correr());
     }
 }

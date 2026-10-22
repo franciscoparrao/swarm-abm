@@ -11,10 +11,11 @@
 //!
 //! Uso: `cargo run --release -p debris-flow --bin trigger_sensitivity --
 //!       [--data DIR] [--preset chanaral-enhanced] [--seed N] [--steps N]
-//!       [--id-threshold MM_H]`
+//!       [--id-threshold MM_H] [--gradiente] [--seeding fixed|follow]
+//!       [--agents N] [--drops-per-km2 D]`
 use std::sync::Arc;
 
-use debris_flow::{DebrisFlowModel, HOURLY_PATTERNS, Params, load};
+use debris_flow::{DebrisFlowModel, HOURLY_PATTERNS, Params, TriggerSeeding, load};
 use swarm_abm::prelude::*;
 
 fn arg<T: std::str::FromStr>(args: &[String], name: &str) -> Option<T> {
@@ -52,13 +53,31 @@ fn main() {
     if let Some(n) = arg::<usize>(&args, "--agents") {
         params.n_rain_agents = n;
     }
+    // `fixed`: la muestra fija de n_rain_agents dispara donde E >= 1 (aísla el
+    // efecto del volumen). `follow` (default del modelo): las gotas se
+    // muestrean cada hora entre las celdas excedidas.
+    let seeding = arg::<String>(&args, "--seeding").unwrap_or_else(|| "follow".into());
+    params.trigger_seeding = match seeding.as_str() {
+        "fixed" => TriggerSeeding::Fixed,
+        "follow" => TriggerSeeding::FollowField,
+        otro => panic!("--seeding {otro}: usa fixed o follow"),
+    };
+    if let Some(d) = arg::<f64>(&args, "--drops-per-km2") {
+        params.trigger_drops_per_km2 = d;
+    }
 
     let data = load(&data_dir).expect("cargar stack");
     let (w, h) = (data.layers.dem.width(), data.layers.dem.height());
     println!(
-        "stack {} · {w}x{h} · preset {preset} · semilla {seed} · {} gotas · umbral I-D {id_threshold} mm/h\n",
+        "stack {} · {w}x{h} · preset {preset} · semilla {seed} · gotas {} · umbral I-D {id_threshold} mm/h\n",
         data_dir.display(),
-        params.n_rain_agents
+        match params.trigger_seeding {
+            TriggerSeeding::Fixed => format!("fijas ({})", params.n_rain_agents),
+            _ => format!(
+                "siguen al gatillo ({} /km², tope {})",
+                params.trigger_drops_per_km2, params.trigger_max_drops
+            ),
+        }
     );
     println!(
         "{:>10} | {:>12} | {:>8} | {:>9} | {:>9}",

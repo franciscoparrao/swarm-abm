@@ -6,20 +6,27 @@ use swarm_abm::prelude::*;
 /// Plano inclinado que baja hacia +y, condiciones óptimas para generar flujo.
 fn layers_plano(width: usize, height: usize, slope_frac: f32) -> Layers {
     let dem = Grid2D::from_fn(width, height, |p| (height - p.y) as f32 * 30.0 * slope_frac);
-    Layers {
+    Layers::new(
         dem,
-        slope: Grid2D::fill(width, height, slope_frac),
-        rain: vec![
+        Grid2D::fill(width, height, slope_frac),
+        vec![
             Grid2D::fill(width, height, 10.0),
             Grid2D::fill(width, height, 10.0),
             Grid2D::fill(width, height, 10.0),
         ],
-        isotherm: Grid2D::fill(width, height, 1.0),
-        sediment: Grid2D::fill(width, height, 1.0),
-        susceptibility: Grid2D::fill(width, height, 1.0),
-        streams: Grid2D::fill(width, height, 0.0),
-        trigger: None,
-    }
+        Grid2D::fill(width, height, 1.0),
+        Grid2D::fill(width, height, 1.0),
+        Grid2D::fill(width, height, 1.0),
+        Grid2D::fill(width, height, 0.0),
+    )
+}
+
+/// `Params` es `#[non_exhaustive]`: desde fuera del crate se parte de un
+/// preset y se ajustan campos, no se construye con literal.
+fn preset_con(ajustar: impl FnOnce(&mut Params)) -> Params {
+    let mut p = Params::default();
+    ajustar(&mut p);
+    p
 }
 
 fn sim(layers: Layers, params: Params, seed: u64) -> Simulation<DebrisFlowModel> {
@@ -37,11 +44,10 @@ fn footprint_cells(m: &DebrisFlowModel) -> Vec<Pos> {
 
 #[test]
 fn genera_flujos_y_descienden() {
-    let params = Params {
-        n_rain_agents: 5,
-        stochastic_temperature: 0.0,
-        ..Params::default()
-    };
+    let params = preset_con(|p| {
+        p.n_rain_agents = 5;
+        p.stochastic_temperature = 0.0;
+    });
     let mut s = sim(layers_plano(60, 200, 0.3), params, 1);
     s.run(300);
 
@@ -73,11 +79,10 @@ fn genera_flujos_y_descienden() {
 
 #[test]
 fn determinismo_con_temperatura() {
-    let params = Params {
-        n_rain_agents: 10,
-        stochastic_temperature: 0.5,
-        ..Params::default()
-    };
+    let params = preset_con(|p| {
+        p.n_rain_agents = 10;
+        p.stochastic_temperature = 0.5;
+    });
     let correr = || {
         let mut s = sim(layers_plano(80, 120, 0.2), params.clone(), 7);
         s.run(300);
@@ -88,14 +93,14 @@ fn determinismo_con_temperatura() {
 
 #[test]
 fn temperatura_dispersa_el_flujo() {
-    let base = Params {
-        n_rain_agents: 10,
-        ..Params::default()
-    };
+    let base = preset_con(|p| {
+        p.n_rain_agents = 10;
+    });
     let correr = |t: f64| {
-        let params = Params {
-            stochastic_temperature: t,
-            ..base.clone()
+        let params = {
+            let mut p = base.clone();
+            p.stochastic_temperature = t;
+            p
         };
         let mut s = sim(layers_plano(120, 120, 0.2), params, 3);
         s.run(300);
@@ -115,11 +120,10 @@ fn spread_costero_divide_el_flujo() {
     // debe dividirse en int(2.92) = 2 hijos.
     let mut layers = layers_plano(60, 60, 0.3);
     layers.slope = Grid2D::fill(60, 60, 0.01); // < coastal_slope_threshold
-    let params = Params {
-        n_rain_agents: 1,
-        stochastic_temperature: 0.0,
-        ..Params::default()
-    };
+    let params = preset_con(|p| {
+        p.n_rain_agents = 1;
+        p.stochastic_temperature = 0.0;
+    });
     let mut s = sim(layers, params, 11);
     // La primera lluvia llega en la hora 6 (día 1); el flujo nace con
     // volumen 10*0.7*2 = 14 > coastal_volume_threshold.
@@ -149,11 +153,10 @@ fn sin_lluvia_no_hay_flujos() {
 fn fisica_coastal_radio_dinamico_y_descenso() {
     // La variante Coastal (selección por menor elevación, radio de footprint
     // dinámico, velocidad con drag) genera flujos que descienden el plano.
-    let params = Params {
-        physics: Physics::Coastal,
-        n_rain_agents: 5,
-        ..Params::default()
-    };
+    let params = preset_con(|p| {
+        p.physics = Physics::Coastal;
+        p.n_rain_agents = 5;
+    });
     let mut s = sim(layers_plano(60, 200, 0.3), params, 1);
     s.run(300);
     assert!(s.model.flows_created > 0, "Coastal debe generar flujos");
@@ -165,11 +168,10 @@ fn fisica_coastal_radio_dinamico_y_descenso() {
     );
     // Determinismo de la variante.
     let correr = || {
-        let p = Params {
-            physics: Physics::Coastal,
-            n_rain_agents: 5,
-            ..Params::default()
-        };
+        let p = preset_con(|p| {
+            p.physics = Physics::Coastal;
+            p.n_rain_agents = 5;
+        });
         let mut s = sim(layers_plano(60, 200, 0.3), p, 1);
         s.run(300);
         footprint_cells(&s.model)

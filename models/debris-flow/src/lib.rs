@@ -11,7 +11,7 @@ pub mod raster;
 
 pub use model::{
     DebrisAgent, DebrisFlowModel, EnhancedPhysics, Flow, HOURLY_PATTERNS, Layers, Metrics,
-    PARAM_DIMS, PARAM_DIMS_CHANARAL, ParamDim, Params, Physics, Raindrop, evaluate,
+    PARAM_DIMS, PARAM_DIMS_CHANARAL, ParamDim, Params, Physics, Raindrop, TriggerSeeding, evaluate,
     evaluate_masked, params_chanaral_from_genes, params_from_genes, run_and_score,
 };
 pub use optim::{Bounds, Method, Outcome};
