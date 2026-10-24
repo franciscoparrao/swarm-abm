@@ -12,7 +12,7 @@
 //! Uso: `cargo run --release -p debris-flow --bin trigger_sensitivity --
 //!       [--data DIR] [--preset chanaral-enhanced] [--seed N] [--steps N]
 //!       [--id-threshold MM_H] [--gradiente] [--seeding fixed|follow]
-//!       [--agents N] [--drops-per-km2 D]`
+//!       [--agents N] [--drops-per-km2 D] [--volume-scale V] [--mm X]`
 use std::sync::Arc;
 
 use debris_flow::{DebrisFlowModel, HOURLY_PATTERNS, Params, TriggerSeeding, load};
@@ -65,11 +65,20 @@ fn main() {
     if let Some(d) = arg::<f64>(&args, "--drops-per-km2") {
         params.trigger_drops_per_km2 = d;
     }
+    if let Some(v) = arg::<f64>(&args, "--volume-scale") {
+        params.trigger_volume_scale = v;
+    }
+    // `--mm X`: un solo nivel de lluvia en vez de la escalera (para barrer
+    // otro parámetro a lluvia fija).
+    let niveles: Vec<f64> = match arg::<f64>(&args, "--mm") {
+        Some(x) => vec![x],
+        None => vec![0.3, 1.0, 5.0, 15.0, 50.0, 200.0],
+    };
 
     let data = load(&data_dir).expect("cargar stack");
     let (w, h) = (data.layers.dem.width(), data.layers.dem.height());
     println!(
-        "stack {} · {w}x{h} · preset {preset} · semilla {seed} · gotas {} · umbral I-D {id_threshold} mm/h\n",
+        "stack {} · {w}x{h} · preset {preset} · semilla {seed} · gotas {} · umbral I-D {id_threshold} mm/h · volumen {}·E\n",
         data_dir.display(),
         match params.trigger_seeding {
             TriggerSeeding::Fixed => format!("fijas ({})", params.n_rain_agents),
@@ -77,7 +86,8 @@ fn main() {
                 "siguen al gatillo ({} /km², tope {})",
                 params.trigger_drops_per_km2, params.trigger_max_drops
             ),
-        }
+        },
+        params.trigger_volume_scale
     );
     println!(
         "{:>10} | {:>12} | {:>8} | {:>9} | {:>9}",
@@ -89,7 +99,7 @@ fn main() {
     );
 
     let mut previa: Option<usize> = None;
-    for mm_dia in [0.3_f64, 1.0, 5.0, 15.0, 50.0, 200.0] {
+    for mm_dia in niveles {
         // Capa de gatillo: una grilla por hora simulada. La lluvia diaria se
         // reemplaza por `mm_dia` uniforme y se desagrega con el mismo patrón
         // horario del modo lluvia, luego se normaliza por el umbral I-D.
