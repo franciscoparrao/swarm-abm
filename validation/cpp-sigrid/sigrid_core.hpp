@@ -191,6 +191,9 @@ struct Animal {
     // granja de origen (ovejas/corderos/perros, especies cercadas). Los zorros y
     // liebres cruzan predios libres y no usan este campo.
     int farm = 0;
+    // unidad de cerco (potrero) de origen de las especies cercadas. Sin raster de
+    // potreros coincide con la granja (unit_of == farm_of).
+    int unit = 0;
     // liebre: reproducción. La decisión (cuántas crías y dónde) se toma en la
     // fase A paralela con el RNG por-agente y se MATERIALIZA en una fase
     // secuencial posterior: así el resultado no depende del orden de hilos y
@@ -269,7 +272,9 @@ struct Params { double width = 2000, height = 2000, sheep_density = 0.96, fox_de
                 int farms_x = 1, farms_y = 1;   // particion sintetica en grilla (1x1 = una granja)
                 double hunt_prob = 0.0;          // caceria: prob. por granja/dia (0 = inerte)
                 const char* farm_raster_path = nullptr;    // raster real de granjas (si != null, fija width/height)
-                const char* cascos_path = nullptr; };       // casas reales por granja (ancla de cacería)
+                const char* cascos_path = nullptr;          // casas reales por granja (ancla de cacería)
+                const char* paddock_raster_path = nullptr;  // raster de potreros (cercos internos; misma grilla que el de granjas)
+                const char* units_path = nullptr; };        // tabla de potreros: area real + punto interior (reparto del rebaño)
 
 // ---- espacio: índice de celdas sobre la instantánea (CSR + SoA) ----
 // Layout memory-bound (Hito 5): en vez de una lista ligada (head/nxt) sobre
@@ -509,6 +514,24 @@ struct Model {
         return gy * params.farms_x + gx;
     }
 
+    // Potreros (cercos internos): segundo nivel de particion, SOLO para la
+    // contencion (move_fenced) y la cohesion del rebano. La estancia (farm) sigue
+    // siendo la unidad de manejo: rebano, perro, caceria, cascos. Cada unidad
+    // pertenece a una sola granja (unit_farm, verificado al cargar). Sin raster de
+    // potreros, unit_of == farm_of y todo lo de abajo queda inerte -> bit-identico.
+    int n_units = 0;
+    std::vector<int> paddock_raster;      // misma grilla (cols/rows/csz) que farm_raster
+    std::vector<int> unit_farm;           // unidad -> granja
+    std::vector<double> unit_weight;      // peso del reparto inicial (area real si hay .units; si no, celdas)
+    std::vector<std::pair<double,double>> unit_center;  // centro del rebano inicial (punto interior si hay .units; si no, centroide)
+    bool has_paddocks() const { return !paddock_raster.empty(); }
+    int unit_of(double x, double y) const {
+        if (paddock_raster.empty()) return farm_of(x, y);
+        int cx = (int)(x / farm_csz); cx = cx < 0 ? 0 : (cx >= farm_cols ? farm_cols - 1 : cx);
+        int cy = (int)(y / farm_csz); cy = cy < 0 ? 0 : (cy >= farm_rows ? farm_rows - 1 : cy);
+        return paddock_raster[(size_t)cy * farm_cols + cx];
+    }
+
     void before_step() {
         current_hour = (int)(step_count % 24); step_count++;
         dog_positions.clear();
@@ -566,8 +589,16 @@ static void norm(double& x, double& y) { double l = std::sqrt(x * x + y * y); if
 // liebres NO pasan por aqui (cruzan predios libres, se mueven con clampd directo).
 static inline void move_fenced(Model& m, Animal& a, double nx, double ny) {
     nx = clampd(nx, 0, m.params.width); ny = clampd(ny, 0, m.params.height);
-    if (m.n_farms > 1 && m.farm_of(nx, ny) != a.farm) return;
+    if (m.has_paddocks()) {                       // potreros: el cerco es la unidad (implica la granja)
+        if (m.unit_of(nx, ny) != a.unit) return;
+    } else if (m.n_farms > 1 && m.farm_of(nx, ny) != a.farm) return;
     a.x = nx; a.y = ny;
+}
+// Misma unidad de cerco que el agente `a` para un vecino en (x,y): potrero si hay
+// raster de potreros, granja si no. Con n_farms<=1 siempre true -> bit-identico.
+static inline bool same_fence(const Model& m, const Animal& a, double x, double y) {
+    if (m.has_paddocks()) return m.unit_of(x, y) == a.unit;
+    return (m.n_farms <= 1) || (m.farm_of(x, y) == a.farm);
 }
 
 // ---- oveja ----
@@ -602,10 +633,11 @@ static void step_sheep(Model& m, int i, PRng& rng) {
             double graze_r = m.dog_positions.empty() ? SHEEP_PERCEPTION_RADIUS : std::max(SHEEP_PERCEPTION_RADIUS, 500.0);
             m.grid.within(s.x, s.y, graze_r, [&](const Snap& sn, double d) {
                 if (!sn.alive) return;
-                // Cohesión y atracción al perro, solo dentro de la propia granja (una
-                // oveja no se agrupa a través de un cerco). El zorro del que huye NO
-                // se filtra (los zorros cruzan predios). Con n_farms<=1 -> bit-idéntico.
-                bool same_farm = (m.n_farms <= 1) || (m.farm_of(sn.x, sn.y) == s.farm);
+                // Cohesión y atracción al perro, solo dentro del propio cerco (granja, o
+                // potrero si hay raster de potreros): una oveja no se agrupa a través de
+                // un cerco. El zorro del que huye NO se filtra (los zorros cruzan
+                // predios). Con n_farms<=1 -> bit-idéntico.
+                bool same_farm = same_fence(m, s, sn.x, sn.y);
                 if (sn.species == SHEEP && d <= SHEEP_PERCEPTION_RADIUS && same_farm) { cx += sn.x; cy += sn.y; n += 1; }
                 if (sn.species == DOG && d < dog_best && same_farm) { dog_best = d; dgx = sn.x; dgy = sn.y; } });
             double vcx = 0, vcy = 0;
@@ -1117,14 +1149,17 @@ static void step_dog(Model& m, int i) {
     }
     // centroide del rebaño (posiciones vivas)
     double cx = 0, cy = 0, n = 0;
-    for (auto& a : m.agents) if (a.alive && a.species == SHEEP && (m.n_farms <= 1 || a.farm == dog.farm)) { cx += a.x; cy += a.y; n += 1; }
+    // El rebaño del perro: las ovejas de su cerco (granja; potrero si hay potreros,
+    // porque el perro tampoco cruza el cerco interno y no puede arrear lo que no alcanza).
+    auto my_flock = [&](const Animal& a) { return m.has_paddocks() ? (a.unit == dog.unit) : (m.n_farms <= 1 || a.farm == dog.farm); };
+    for (auto& a : m.agents) if (a.alive && a.species == SHEEP && my_flock(a)) { cx += a.x; cy += a.y; n += 1; }
     double flx = n > 0 ? cx / n : dog.patrol_cx, fly = n > 0 ? cy / n : dog.patrol_cy;
     // (3) arreo: si hay ovejas lejos del centro, el perro se pone POR DETRÁS de
     // la más alejada (a 50 m en la dirección opuesta al rebaño) para empujarla.
     if (n > 1) {
         int worst = -1; double worst_d = DOG_SCATTERED_THRESHOLD;
         for (size_t k = 0; k < m.agents.size(); ++k) { const Animal& a = m.agents[k];
-            if (!a.alive || a.species != SHEEP || (m.n_farms > 1 && a.farm != dog.farm)) continue;
+            if (!a.alive || a.species != SHEEP || !my_flock(a)) continue;
             const double dx = a.x - flx, dy = a.y - fly, d = std::sqrt(dx * dx + dy * dy);
             if (d > worst_d) { worst_d = d; worst = (int)k; } }
         if (worst >= 0) { m.n_herd++;
@@ -1184,37 +1219,52 @@ static void build_model(const Params& params, uint64_t seed, Model& m,
         }
         for (int f = 0; f < m.n_farms; ++f) if (farm_cells[f] > 0) m.farm_casco[f] = {sx[f] / farm_cells[f], sy[f] / farm_cells[f]};
     }
-    // Reparto acumulado proporcional al área: a qué granja va el agente k de n (geom.,
-    // no consume RNG). Con n_farms<=1 devuelve 0 -> el camino original no cambia.
-    auto farm_of_k = [&](int k, int n) -> int {
-        if (m.n_farms <= 1) return 0;
-        long T = 0; for (long c : farm_cells) T += c; if (T <= 0) return 0;
-        double target = ((double)k + 0.5) / (double)n * (double)T, acc = 0;
-        for (int f = 0; f < m.n_farms; ++f) { acc += (double)farm_cells[f]; if (target < acc) return f; }
-        return m.n_farms - 1;
+    double fcx = params.width / 2.0, fcy = params.height / 2.0;
+    // --- grupos del reparto inicial del rebaño: POTREROS si hay raster de potreros,
+    // granjas si no. Pesos y centros: con potreros, el área real y el punto interior
+    // de .units (o celdas y centroide si no se cargó .units); sin potreros, celdas y
+    // casco de la granja (camino original, misma aritmética -> bit-idéntico). Es
+    // geométrico, no consume RNG. Con n_farms<=1 group_of_k devuelve 0. ---
+    const bool grouped = m.n_farms > 1;
+    const int n_groups = m.has_paddocks() ? m.n_units : m.n_farms;
+    std::vector<double> gw(n_groups, 0.0);
+    std::vector<std::pair<double,double>> gc(n_groups, {fcx, fcy});
+    if (m.has_paddocks()) { gw = m.unit_weight; gc = m.unit_center; }
+    else for (int f = 0; f < m.n_farms; ++f) { gw[f] = (double)farm_cells[f]; gc[f] = m.farm_casco[f]; }
+    auto group_of_k = [&](int k, int n) -> int {
+        if (!grouped) return 0;
+        double T = 0; for (double w : gw) T += w; if (T <= 0) return 0;
+        double target = ((double)k + 0.5) / (double)n * T, acc = 0;
+        for (int g = 0; g < n_groups; ++g) { acc += gw[g]; if (target < acc) return g; }
+        return n_groups - 1;
+    };
+    // Grupo del perro de la granja f: su potrero de mayor peso (si hay potreros) o la granja.
+    auto dog_group = [&](int f) -> int {
+        if (!m.has_paddocks()) return f;
+        int best = -1; for (int u = 0; u < m.n_units; ++u) if (m.unit_farm[u] == f && (best < 0 || gw[u] > gw[best])) best = u;
+        return best < 0 ? 0 : best;
     };
 
-    double fcx = params.width / 2.0, fcy = params.height / 2.0;
     std::vector<int> adult_ids;                           // (n_farms==1)
-    std::vector<std::vector<int>> adult_ids_f;            // (n_farms>1) por granja
-    if (m.n_farms > 1) adult_ids_f.resize(m.n_farms);
+    std::vector<std::vector<int>> adult_ids_f;            // (n_farms>1) por grupo
+    if (grouped) adult_ids_f.resize(n_groups);
     for (int k = 0; k < n_adults; ++k) {
-        int f = farm_of_k(k, n_adults);
-        double ax = (m.n_farms > 1) ? m.farm_casco[f].first  : fcx;
-        double ay = (m.n_farms > 1) ? m.farm_casco[f].second : fcy;
+        int f = group_of_k(k, n_adults);
+        double ax = grouped ? gc[f].first  : fcx;
+        double ay = grouped ? gc[f].second : fcy;
         Animal a{}; a.species = SHEEP; a.alive = true; a.energy = 100; a.mother = -1;
         a.x = clampd(ax + rng_build.range(-300, 300), 0, params.width); a.y = clampd(ay + rng_build.range(-300, 300), 0, params.height);
         a.age_days = rng_build.range(365, 2000); a.vulnerability = SHEEP_ADULT_VULN;
         int gid = (int)m.agents.size();
-        if (m.n_farms > 1) adult_ids_f[f].push_back(gid); else adult_ids.push_back(gid);
+        if (grouped) adult_ids_f[f].push_back(gid); else adult_ids.push_back(gid);
         m.agents.push_back(a);
     }
     for (int k = 0; k < n_lambs; ++k) {
-        int f = farm_of_k(k, n_lambs);
-        std::vector<int>& ids = (m.n_farms > 1) ? adult_ids_f[f] : adult_ids;
+        int f = group_of_k(k, n_lambs);
+        std::vector<int>& ids = grouped ? adult_ids_f[f] : adult_ids;
         int mother = ids.empty() ? -1 : ids[(int)rng_build.range(0, (double)ids.size())];
-        double bx = (m.n_farms > 1) ? m.farm_casco[f].first : fcx;
-        double by = (m.n_farms > 1) ? m.farm_casco[f].second : fcy;
+        double bx = grouped ? gc[f].first : fcx;
+        double by = grouped ? gc[f].second : fcy;
         if (mother >= 0) { bx = m.agents[mother].x; by = m.agents[mother].y; }
         Animal a{}; a.species = SHEEP; a.alive = true; a.is_lamb = true; a.energy = 70; a.mother = mother;
         a.x = clampd(bx + rng_build.range(-20, 20), 0, params.width); a.y = clampd(by + rng_build.range(-20, 20), 0, params.height);
@@ -1248,7 +1298,7 @@ static void build_model(const Params& params, uint64_t seed, Model& m,
     for (int k = 0; k < params.n_dogs; ++k) {
         double a0 = rng_build.range(0.0, TAU);
         double dcx = fcx, dcy = fcy;                       // n_farms>1: un perro por granja (round-robin) en su casco
-        if (m.n_farms > 1) { int f = k % m.n_farms; dcx = m.farm_casco[f].first; dcy = m.farm_casco[f].second; }
+        if (grouped) { int g = dog_group(k % m.n_farms); dcx = gc[g].first; dcy = gc[g].second; }  // con potreros: en el potrero mayor de su granja
         Animal a{}; a.species = DOG; a.alive = true; a.energy = 100; a.mother = -1;
         a.x = clampd(dcx + std::cos(a0) * 300.0, 0, params.width); a.y = clampd(dcy + std::sin(a0) * 300.0, 0, params.height);
         a.patrol_cx = dcx; a.patrol_cy = dcy;
@@ -1257,7 +1307,7 @@ static void build_model(const Params& params, uint64_t seed, Model& m,
     // Granja de origen de las especies cercadas, según su posición de creación
     // (n_farms y cascos ya se fijaron arriba). Con n_farms<=1 queda farm=0.
     for (auto& a : m.agents)
-        if (a.species == SHEEP || a.species == DOG) a.farm = m.farm_of(a.x, a.y);
+        if (a.species == SHEEP || a.species == DOG) { a.farm = m.farm_of(a.x, a.y); a.unit = m.unit_of(a.x, a.y); }
 
     phaseA.clear(); phaseB.clear(); foxidx.clear();
     for (size_t k = 0; k < m.agents.size(); ++k) {
@@ -1311,6 +1361,63 @@ static bool load_cascos(Model& m, const char* path) {
         if (f >= 0 && f < m.n_farms) m.farm_homesteads[f].push_back({x, y});
     }
     std::fclose(fp);
+    return true;
+}
+
+// Carga el raster de potreros (mismo formato y MISMA grilla que el de granjas) y,
+// opcionalmente, la tabla .units ("n" + lineas "unit_id farm_id nombre area_ha x y",
+// coords locales). Deriva unit_farm del raster de granjas y exige que cada unidad
+// caiga en UNA sola granja (el potrero refina la estancia, no la cruza). Sin .units,
+// peso = celdas y centro = centroide de celdas. Llamar DESPUES de load_farm_raster
+// y ANTES de build_model. Devuelve false (con mensaje) ante cualquier error: el
+// driver debe ABORTAR, no seguir sin cercos en silencio.
+static bool load_paddocks(Model& m, const char* raster_path, const char* units_path) {
+    if (!raster_path) return false;
+    if (m.farm_raster.empty()) { std::fprintf(stderr, "load_paddocks: requiere --farm-raster\n"); return false; }
+    FILE* fp = std::fopen(raster_path, "r");
+    if (!fp) { std::fprintf(stderr, "load_paddocks: no pude abrir %s\n", raster_path); return false; }
+    int cols = 0, rows = 0; double csz = 0.0;
+    if (std::fscanf(fp, "%d %d %lf", &cols, &rows, &csz) != 3 || cols != m.farm_cols || rows != m.farm_rows || csz != m.farm_csz) {
+        std::fprintf(stderr, "load_paddocks: la grilla de %s (%dx%d @%.1f) no coincide con la de granjas (%dx%d @%.1f)\n",
+                     raster_path, cols, rows, csz, m.farm_cols, m.farm_rows, m.farm_csz); std::fclose(fp); return false;
+    }
+    std::vector<int> data((size_t)cols * rows); int maxid = -1;
+    for (size_t i = 0; i < data.size(); ++i) {
+        if (std::fscanf(fp, "%d", &data[i]) != 1 || data[i] < 0) {
+            std::fprintf(stderr, "load_paddocks: dato invalido en %s (celda %zu de %zu)\n", raster_path, i, data.size());
+            std::fclose(fp); return false;
+        }
+        if (data[i] > maxid) maxid = data[i];
+    }
+    std::fclose(fp);
+    const int n = maxid + 1;
+    std::vector<int> uf(n, -1); std::vector<double> cells(n, 0.0), sx(n, 0.0), sy(n, 0.0);
+    for (int r = 0; r < rows; ++r) for (int c = 0; c < cols; ++c) {
+        const size_t i = (size_t)r * cols + c; const int u = data[i], f = m.farm_raster[i];
+        if (uf[u] < 0) uf[u] = f;
+        else if (uf[u] != f) { std::fprintf(stderr, "load_paddocks: la unidad %d cae en las granjas %d y %d\n", u, uf[u], f); return false; }
+        cells[u] += 1.0; sx[u] += (c + 0.5) * csz; sy[u] += (r + 0.5) * csz;   // fila 0 = sur, como farm_of
+    }
+    for (int u = 0; u < n; ++u) if (uf[u] < 0) { std::fprintf(stderr, "load_paddocks: la unidad %d no tiene celdas\n", u); return false; }
+    m.paddock_raster = std::move(data); m.n_units = n; m.unit_farm = uf;
+    m.unit_weight = cells; m.unit_center.resize(n);
+    for (int u = 0; u < n; ++u) m.unit_center[u] = {sx[u] / cells[u], sy[u] / cells[u]};
+    if (!units_path) return true;
+    FILE* fu = std::fopen(units_path, "r");
+    if (!fu) { std::fprintf(stderr, "load_paddocks: no pude abrir %s\n", units_path); return false; }
+    int nu = 0;
+    if (std::fscanf(fu, "%d", &nu) != 1 || nu != n) { std::fprintf(stderr, "load_paddocks: %s declara %d unidades, el raster tiene %d\n", units_path, nu, n); std::fclose(fu); return false; }
+    char name[256];
+    for (int i = 0; i < nu; ++i) {
+        int u = -1, f = -1; double ha = 0, x = 0, y = 0;
+        if (std::fscanf(fu, "%d %d %255s %lf %lf %lf", &u, &f, name, &ha, &x, &y) != 6 || u < 0 || u >= n) {
+            std::fprintf(stderr, "load_paddocks: linea invalida en %s (unidad %d)\n", units_path, i); std::fclose(fu); return false; }
+        if (f != m.unit_farm[u]) { std::fprintf(stderr, "load_paddocks: %s dice que la unidad %d es de la granja %d; el raster dice %d\n", units_path, u, f, m.unit_farm[u]); std::fclose(fu); return false; }
+        if (ha <= 0 || x < 0 || y < 0 || x > cols * csz || y > rows * csz) { std::fprintf(stderr, "load_paddocks: area o centro invalidos (unidad %d)\n", u); std::fclose(fu); return false; }
+        if (m.unit_of(x, y) != u) { std::fprintf(stderr, "load_paddocks: el centro (%.0f,%.0f) de la unidad %d cae en la unidad %d\n", x, y, u, m.unit_of(x, y)); std::fclose(fu); return false; }
+        m.unit_weight[u] = ha; m.unit_center[u] = {x, y};
+    }
+    std::fclose(fu);
     return true;
 }
 

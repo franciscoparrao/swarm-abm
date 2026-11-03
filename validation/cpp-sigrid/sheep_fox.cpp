@@ -25,6 +25,11 @@ static double run_loss_rate(const Params& params_in, uint64_t seed, uint64_t n_d
         params.width  = m.farm_cols * m.farm_csz;
         params.height = m.farm_rows * m.farm_csz;
     }
+    // Potreros (cercos internos): si se pidieron y no cargan, ABORTAR (nunca correr
+    // sin cercos en silencio). Sin --paddocks es un no-op -> bit-idéntico.
+    if (params.paddock_raster_path && !load_paddocks(m, params.paddock_raster_path, params.units_path)) {
+        std::fprintf(stderr, "abortando: no se pudo cargar el raster de potreros\n"); std::exit(2);
+    }
     build_model(params, seed, m, phaseA, phaseB, foxidx);
     load_cascos(m, params.cascos_path);   // casas reales (ancla de cacería); no-op si null
     // Buffers reusados para la detección de zorros precomputada (Hito 4b).
@@ -69,7 +74,16 @@ static double run_loss_rate(const Params& params_in, uint64_t seed, uint64_t n_d
             if (a.species == HARE) { nh++; hare_e += a.energy; }
             if (a.species == SHEEP) ns++; }
         const double area_ha = (m.params.width * m.params.height) / 10000.0;
-        fprintf(stderr, "  [dog] persecuciones %ld | rastro %ld | arreo %ld\n", m.n_chase, m.n_trail, m.n_herd);    }
+        fprintf(stderr, "  [dog] persecuciones %ld | rastro %ld | arreo %ld\n", m.n_chase, m.n_trail, m.n_herd);
+        // cercos: violaciones (agente cercado fuera de su granja / potrero) y ovejas por unidad
+        long viol_farm = 0, viol_unit = 0; std::vector<long> per_unit(std::max(1, m.n_units), 0);
+        for (auto& a : m.agents) { if (!a.alive || (a.species != SHEEP && a.species != DOG)) continue;
+            if (m.n_farms > 1 && m.farm_of(a.x, a.y) != a.farm) viol_farm++;
+            if (m.has_paddocks()) { if (m.unit_of(a.x, a.y) != a.unit) viol_unit++; if (a.species == SHEEP) per_unit[a.unit]++; } }
+        fprintf(stderr, "  [cercos] granjas %d | potreros %d | violaciones granja %ld | violaciones potrero %ld | zorros cazados %ld\n",
+                m.n_farms, m.n_units, viol_farm, viol_unit, m.foxes_hunted);
+        if (m.has_paddocks()) { fprintf(stderr, "  [ovejas/potrero]"); for (int u = 0; u < m.n_units; ++u) fprintf(stderr, " u%d(f%d)=%ld", u, m.unit_farm[u], per_unit[u]); fprintf(stderr, "\n"); }
+    }
     killed = m.sheep_killed; attempts = m.predation_attempts;
     return (double)m.sheep_killed / std::max(1, m.n_sheep_initial) * 100.0;
 }
@@ -80,6 +94,8 @@ int main(int argc, char** argv) {
     auto sarg = [&](const char* n) -> const char* { for (int i = 1; i < argc - 1; ++i) if (!std::strcmp(argv[i], n)) return argv[i + 1]; return nullptr; };
     p.farm_raster_path = sarg("--farm-raster");   // raster real de granjas (fija el dominio)
     p.cascos_path = sarg("--cascos");             // casas reales por granja (ancla de cacería)
+    p.paddock_raster_path = sarg("--paddocks");   // raster de potreros (cercos internos; requiere --farm-raster)
+    p.units_path = sarg("--units");               // tabla de potreros: area real + punto interior (reparto del rebaño)
     days = (uint64_t)darg("--days", 30); seed0 = (uint64_t)darg("--seed", 1000); n_seeds = (uint64_t)darg("--seeds", 1);
     p.sheep_density = darg("--sheep-density", p.sheep_density);
     p.fox_density = darg("--fox-density", p.fox_density);
