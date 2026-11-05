@@ -30,6 +30,17 @@ static double run_loss_rate(const Params& params_in, uint64_t seed, uint64_t n_d
     if (params.paddock_raster_path && !load_paddocks(m, params.paddock_raster_path, params.units_path)) {
         std::fprintf(stderr, "abortando: no se pudo cargar el raster de potreros\n"); std::exit(2);
     }
+    // Estación: --season y --season-sim van juntos; cualquiera sin el otro, o un error
+    // de carga, ABORTA. Sin ambos es un no-op -> bit-idéntico.
+    if ((params.season_path != nullptr) != (params.season_sim >= 0)) {
+        std::fprintf(stderr, "abortando: --season y --season-sim van juntos\n"); std::exit(2);
+    }
+    if (params.season_path && !load_season(m, params.season_path)) {
+        std::fprintf(stderr, "abortando: no se pudo cargar la estacion\n"); std::exit(2);
+    }
+    if (params.dog_roam && !params.paddock_raster_path) {
+        std::fprintf(stderr, "abortando: --dog-roam requiere --paddocks\n"); std::exit(2);
+    }
     build_model(params, seed, m, phaseA, phaseB, foxidx);
     load_cascos(m, params.cascos_path);   // casas reales (ancla de cacería); no-op si null
     // Buffers reusados para la detección de zorros precomputada (Hito 4b).
@@ -79,10 +90,18 @@ static double run_loss_rate(const Params& params_in, uint64_t seed, uint64_t n_d
         long viol_farm = 0, viol_unit = 0; std::vector<long> per_unit(std::max(1, m.n_units), 0);
         for (auto& a : m.agents) { if (!a.alive || (a.species != SHEEP && a.species != DOG)) continue;
             if (m.n_farms > 1 && m.farm_of(a.x, a.y) != a.farm) viol_farm++;
-            if (m.has_paddocks()) { if (m.unit_of(a.x, a.y) != a.unit) viol_unit++; if (a.species == SHEEP) per_unit[a.unit]++; } }
+            // el perro con --dog-roam cruza potreros a propósito: no es violación
+            if (m.has_paddocks()) { if (m.unit_of(a.x, a.y) != a.unit && !(a.species == DOG && m.params.dog_roam)) viol_unit++; if (a.species == SHEEP) per_unit[a.unit]++; } }
         fprintf(stderr, "  [cercos] granjas %d | potreros %d | violaciones granja %ld | violaciones potrero %ld | zorros cazados %ld\n",
                 m.n_farms, m.n_units, viol_farm, viol_unit, m.foxes_hunted);
         if (m.has_paddocks()) { fprintf(stderr, "  [ovejas/potrero]"); for (int u = 0; u < m.n_units; ++u) fprintf(stderr, " u%d(f%d)=%ld", u, m.unit_farm[u], per_unit[u]); fprintf(stderr, "\n"); }
+        if (!m.unit_season.empty()) { long s0 = 0, s1 = 0; for (int u = 0; u < m.n_units; ++u) (m.unit_season[u] == 0 ? s0 : s1) += per_unit[u];
+            fprintf(stderr, "  [estacion] simulada %d | ovejas en invernada %ld | en veranada %ld\n", m.params.season_sim, s0, s1); }
+        { std::vector<long> dpf(m.n_farms, 0); std::vector<long> dpu(std::max(1, m.n_units), 0);
+          for (auto& a : m.agents) if (a.alive && a.species == DOG) { dpf[a.farm]++; if (m.has_paddocks()) dpu[m.unit_of(a.x, a.y)]++; }
+          fprintf(stderr, "  [perros/estancia]"); for (int f = 0; f < m.n_farms; ++f) fprintf(stderr, " f%d=%ld", f, dpf[f]);
+          if (m.has_paddocks()) { fprintf(stderr, " | en potrero:"); for (int u = 0; u < m.n_units; ++u) if (dpu[u]) fprintf(stderr, " u%d=%ld", u, dpu[u]); }
+          fprintf(stderr, "\n"); }
     }
     killed = m.sheep_killed; attempts = m.predation_attempts;
     return (double)m.sheep_killed / std::max(1, m.n_sheep_initial) * 100.0;
@@ -96,6 +115,11 @@ int main(int argc, char** argv) {
     p.cascos_path = sarg("--cascos");             // casas reales por granja (ancla de cacería)
     p.paddock_raster_path = sarg("--paddocks");   // raster de potreros (cercos internos; requiere --farm-raster)
     p.units_path = sarg("--units");               // tabla de potreros: area real + punto interior (reparto del rebaño)
+    p.season_path = sarg("--season");             // estación por unidad (requiere --paddocks)
+    p.season_sim = (int)darg("--season-sim", -1); // 0 invernada, 1 veranada (requiere --season)
+    if (p.season_sim > 1) { std::fprintf(stderr, "abortando: --season-sim debe ser 0 o 1\n"); return 2; }
+    p.dog_roam = darg("--dog-roam", 0) != 0;      // perro cruza cercos internos y sigue al grupo mayor
+    p.dogs_farm = sarg("--dogs-farm");            // perros por estancia "n0,n1,..." (reemplaza --dogs)
     days = (uint64_t)darg("--days", 30); seed0 = (uint64_t)darg("--seed", 1000); n_seeds = (uint64_t)darg("--seeds", 1);
     p.sheep_density = darg("--sheep-density", p.sheep_density);
     p.fox_density = darg("--fox-density", p.fox_density);

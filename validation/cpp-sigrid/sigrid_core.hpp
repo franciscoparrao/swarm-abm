@@ -274,7 +274,11 @@ struct Params { double width = 2000, height = 2000, sheep_density = 0.96, fox_de
                 const char* farm_raster_path = nullptr;    // raster real de granjas (si != null, fija width/height)
                 const char* cascos_path = nullptr;          // casas reales por granja (ancla de cacería)
                 const char* paddock_raster_path = nullptr;  // raster de potreros (cercos internos; misma grilla que el de granjas)
-                const char* units_path = nullptr; };        // tabla de potreros: area real + punto interior (reparto del rebaño)
+                const char* units_path = nullptr;           // tabla de potreros: area real + punto interior (reparto del rebaño)
+                const char* season_path = nullptr;          // estación por unidad (0 invernada, 1 veranada); requiere potreros
+                int season_sim = -1;                        // estación simulada: el rebaño parte SOLO en sus unidades (-1 = inerte)
+                bool dog_roam = false;                      // perro confinado solo por la estancia; sigue al potrero con más ovejas
+                const char* dogs_farm = nullptr; };         // perros por estancia "n0,n1,..." (orden farm_id); reemplaza el round-robin de n_dogs
 
 // ---- espacio: índice de celdas sobre la instantánea (CSR + SoA) ----
 // Layout memory-bound (Hito 5): en vez de una lista ligada (head/nxt) sobre
@@ -524,6 +528,7 @@ struct Model {
     std::vector<int> unit_farm;           // unidad -> granja
     std::vector<double> unit_weight;      // peso del reparto inicial (area real si hay .units; si no, celdas)
     std::vector<std::pair<double,double>> unit_center;  // centro del rebano inicial (punto interior si hay .units; si no, centroide)
+    std::vector<int> unit_season;         // estación de cada unidad (0 invernada, 1 veranada); vacío si no se cargó
     bool has_paddocks() const { return !paddock_raster.empty(); }
     int unit_of(double x, double y) const {
         if (paddock_raster.empty()) return farm_of(x, y);
@@ -589,7 +594,10 @@ static void norm(double& x, double& y) { double l = std::sqrt(x * x + y * y); if
 // liebres NO pasan por aqui (cruzan predios libres, se mueven con clampd directo).
 static inline void move_fenced(Model& m, Animal& a, double nx, double ny) {
     nx = clampd(nx, 0, m.params.width); ny = clampd(ny, 0, m.params.height);
-    if (m.has_paddocks()) {                       // potreros: el cerco es la unidad (implica la granja)
+    // potreros: el cerco es la unidad (implica la granja). El perro con dog_roam cruza
+    // los cercos internos y solo lo detiene el límite de su estancia.
+    const bool by_unit = m.has_paddocks() && !(a.species == DOG && m.params.dog_roam);
+    if (by_unit) {
         if (m.unit_of(nx, ny) != a.unit) return;
     } else if (m.n_farms > 1 && m.farm_of(nx, ny) != a.farm) return;
     a.x = nx; a.y = ny;
@@ -1151,7 +1159,17 @@ static void step_dog(Model& m, int i) {
     double cx = 0, cy = 0, n = 0;
     // El rebaño del perro: las ovejas de su cerco (granja; potrero si hay potreros,
     // porque el perro tampoco cruza el cerco interno y no puede arrear lo que no alcanza).
-    auto my_flock = [&](const Animal& a) { return m.has_paddocks() ? (a.unit == dog.unit) : (m.n_farms <= 1 || a.farm == dog.farm); };
+    // Con dog_roam el perro sigue al grupo más grande de su estancia: el potrero con más
+    // ovejas vivas (Ana 2026-11-03: "tiende a estar con el grupo más grande, pero se
+    // mueve todo el tiempo"). Se recalcula cada paso; empate -> menor id de unidad.
+    int flock_unit = dog.unit;
+    if (m.has_paddocks() && m.params.dog_roam) {
+        std::vector<int> cnt(m.n_units, 0);
+        for (auto& a : m.agents) if (a.alive && a.species == SHEEP && a.farm == dog.farm) cnt[a.unit]++;
+        int best = -1; for (int u = 0; u < m.n_units; ++u) if (cnt[u] > 0 && (best < 0 || cnt[u] > cnt[best])) best = u;
+        if (best >= 0) flock_unit = best;
+    }
+    auto my_flock = [&](const Animal& a) { return m.has_paddocks() ? (a.unit == flock_unit) : (m.n_farms <= 1 || a.farm == dog.farm); };
     for (auto& a : m.agents) if (a.alive && a.species == SHEEP && my_flock(a)) { cx += a.x; cy += a.y; n += 1; }
     double flx = n > 0 ? cx / n : dog.patrol_cx, fly = n > 0 ? cy / n : dog.patrol_cy;
     // (3) arreo: si hay ovejas lejos del centro, el perro se pone POR DETRÁS de
@@ -1231,6 +1249,19 @@ static void build_model(const Params& params, uint64_t seed, Model& m,
     std::vector<std::pair<double,double>> gc(n_groups, {fcx, fcy});
     if (m.has_paddocks()) { gw = m.unit_weight; gc = m.unit_center; }
     else for (int f = 0; f < m.n_farms; ++f) { gw[f] = (double)farm_cells[f]; gc[f] = m.farm_casco[f]; }
+    // Estación simulada: el rebaño parte SOLO en las unidades de esa estación. Cada
+    // estancia conserva su total (la carga es de la estancia, no de la mitad usada):
+    // los pesos activos se reescalan para sumar el área de la estancia. Inerte si
+    // season_sim < 0 o no se cargó .season.
+    const bool season_on = m.has_paddocks() && params.season_sim >= 0 && !m.unit_season.empty();
+    if (season_on) {
+        for (int f = 0; f < m.n_farms; ++f) {
+            double tot = 0, act = 0;
+            for (int u = 0; u < m.n_units; ++u) if (m.unit_farm[u] == f) { tot += gw[u]; if (m.unit_season[u] == params.season_sim) act += gw[u]; }
+            for (int u = 0; u < m.n_units; ++u) if (m.unit_farm[u] == f)
+                gw[u] = (m.unit_season[u] == params.season_sim && act > 0) ? gw[u] * tot / act : 0.0;
+        }
+    }
     auto group_of_k = [&](int k, int n) -> int {
         if (!grouped) return 0;
         double T = 0; for (double w : gw) T += w; if (T <= 0) return 0;
@@ -1254,6 +1285,9 @@ static void build_model(const Params& params, uint64_t seed, Model& m,
         double ay = grouped ? gc[f].second : fcy;
         Animal a{}; a.species = SHEEP; a.alive = true; a.energy = 100; a.mother = -1;
         a.x = clampd(ax + rng_build.range(-300, 300), 0, params.width); a.y = clampd(ay + rng_build.range(-300, 300), 0, params.height);
+        // con estación: si la dispersión de ±300 m la saca a una unidad de la otra
+        // estación, parte en el centro de su grupo (no consume RNG; inerte sin estación).
+        if (season_on && m.unit_season[m.unit_of(a.x, a.y)] != params.season_sim) { a.x = ax; a.y = ay; }
         a.age_days = rng_build.range(365, 2000); a.vulnerability = SHEEP_ADULT_VULN;
         int gid = (int)m.agents.size();
         if (grouped) adult_ids_f[f].push_back(gid); else adult_ids.push_back(gid);
@@ -1268,6 +1302,7 @@ static void build_model(const Params& params, uint64_t seed, Model& m,
         if (mother >= 0) { bx = m.agents[mother].x; by = m.agents[mother].y; }
         Animal a{}; a.species = SHEEP; a.alive = true; a.is_lamb = true; a.energy = 70; a.mother = mother;
         a.x = clampd(bx + rng_build.range(-20, 20), 0, params.width); a.y = clampd(by + rng_build.range(-20, 20), 0, params.height);
+        if (season_on && m.unit_season[m.unit_of(a.x, a.y)] != params.season_sim) { a.x = bx; a.y = by; }
         a.age_days = rng_build.range(0, 30); a.vulnerability = LAMB_VULN;
         m.agents.push_back(a);
     }
@@ -1295,12 +1330,26 @@ static void build_model(const Params& params, uint64_t seed, Model& m,
         a.vulnerability = a.mature ? HARE_VULN_MATURE : HARE_VULN_JUV;
         m.agents.push_back(a);
     }
-    for (int k = 0; k < params.n_dogs; ++k) {
+    // Granja de cada perro: round-robin sobre n_dogs (camino original) o, con
+    // dogs_farm "n0,n1,...", tantos perros por estancia como se pidan (en orden farm_id).
+    std::vector<int> dog_farm;
+    if (params.dogs_farm) {
+        const char* s = params.dogs_farm; int f = 0;
+        while (*s) { char* e; long n = std::strtol(s, &e, 10);
+            if (e == s || n < 0) { std::fprintf(stderr, "dogs_farm invalido: \"%s\"\n", params.dogs_farm); std::exit(2); }
+            for (long j = 0; j < n; ++j) dog_farm.push_back(f);
+            ++f; s = (*e == ',') ? e + 1 : e; if (*e && *e != ',') { std::fprintf(stderr, "dogs_farm invalido: \"%s\"\n", params.dogs_farm); std::exit(2); } }
+        if (f != m.n_farms) { std::fprintf(stderr, "dogs_farm da %d estancias; el modelo tiene %d\n", f, m.n_farms); std::exit(2); }
+    } else for (int k = 0; k < params.n_dogs; ++k) dog_farm.push_back(grouped ? k % m.n_farms : 0);
+    for (int k = 0; k < (int)dog_farm.size(); ++k) {
         double a0 = rng_build.range(0.0, TAU);
         double dcx = fcx, dcy = fcy;                       // n_farms>1: un perro por granja (round-robin) en su casco
-        if (grouped) { int g = dog_group(k % m.n_farms); dcx = gc[g].first; dcy = gc[g].second; }  // con potreros: en el potrero mayor de su granja
+        if (grouped) { int g = dog_group(dog_farm[k]); dcx = gc[g].first; dcy = gc[g].second; }  // con potreros: en el potrero mayor de su granja
         Animal a{}; a.species = DOG; a.alive = true; a.energy = 100; a.mother = -1;
         a.x = clampd(dcx + std::cos(a0) * 300.0, 0, params.width); a.y = clampd(dcy + std::sin(a0) * 300.0, 0, params.height);
+        // con dogs_farm el perro debe quedar en SU estancia: si el desplazamiento de 300 m
+        // lo saca, parte en el centro de su grupo (no consume RNG).
+        if (params.dogs_farm && grouped && m.farm_of(a.x, a.y) != dog_farm[k]) { a.x = dcx; a.y = dcy; }
         a.patrol_cx = dcx; a.patrol_cy = dcy;
         m.agents.push_back(a);
     }
@@ -1418,6 +1467,34 @@ static bool load_paddocks(Model& m, const char* raster_path, const char* units_p
         m.unit_weight[u] = ha; m.unit_center[u] = {x, y};
     }
     std::fclose(fu);
+    return true;
+}
+
+// Carga la estación de cada unidad ("n" + lineas "unit_id estacion", 0 invernada /
+// 1 veranada). Requiere potreros ya cargados y el mismo número de unidades. Exige que
+// cada estancia tenga al menos una unidad de cada estación. Devuelve false (con
+// mensaje) ante cualquier error: el driver debe ABORTAR.
+static bool load_season(Model& m, const char* path) {
+    if (!path) return false;
+    if (!m.has_paddocks()) { std::fprintf(stderr, "load_season: requiere --paddocks\n"); return false; }
+    FILE* fp = std::fopen(path, "r");
+    if (!fp) { std::fprintf(stderr, "load_season: no pude abrir %s\n", path); return false; }
+    int n = 0;
+    if (std::fscanf(fp, "%d", &n) != 1 || n != m.n_units) { std::fprintf(stderr, "load_season: %s declara %d unidades, hay %d\n", path, n, m.n_units); std::fclose(fp); return false; }
+    std::vector<int> s(n, -1);
+    for (int i = 0; i < n; ++i) {
+        int u = -1, v = -1;
+        if (std::fscanf(fp, "%d %d", &u, &v) != 2 || u < 0 || u >= n || (v != 0 && v != 1)) {
+            std::fprintf(stderr, "load_season: linea invalida en %s (%d)\n", path, i); std::fclose(fp); return false; }
+        s[u] = v;
+    }
+    std::fclose(fp);
+    for (int f = 0; f < m.n_farms; ++f) {
+        bool has0 = false, has1 = false;
+        for (int u = 0; u < n; ++u) if (m.unit_farm[u] == f) { if (s[u] < 0) { std::fprintf(stderr, "load_season: falta la unidad %d\n", u); return false; } has0 |= s[u] == 0; has1 |= s[u] == 1; }
+        if (!has0 || !has1) { std::fprintf(stderr, "load_season: la estancia %d no tiene unidades de ambas estaciones\n", f); return false; }
+    }
+    m.unit_season = s;
     return true;
 }
 
