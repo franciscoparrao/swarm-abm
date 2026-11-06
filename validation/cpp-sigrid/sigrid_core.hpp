@@ -285,7 +285,10 @@ struct Params { double width = 2000, height = 2000, sheep_density = 0.96, fox_de
                 int hunt_mode = 0;                          // 0 = régimen anterior (casa, hunt_prob); 1 = régimen B
                 double hunt_p_culpeo = 0.0;                 // prob. de abatir un culpeo dentro del radio, por salida
                 double hunt_chilla_ratio = 0.05;            // prob. chilla = hunt_p_culpeo * ratio (cacería selectiva)
-                double hunt_radius = 500.0; };              // radio de detección/tiro del ovejero (m)
+                double hunt_radius = 500.0;                 // radio de detección/tiro del ovejero (m)
+                double hunt_outing_prob = 1.0;              // prob. de salir cada día hábil (1 = régimen B; baja + p alta = régimen A)
+                const char* hunt_farms = nullptr;           // estancias que cazan "1,0,0,0,1" (orden farm_id); nullptr = todas
+                const char* farm_out_path = nullptr; };     // CSV de resultados por estancia (se agrega una fila por semilla y estancia)
 
 // ---- espacio: índice de celdas sobre la instantánea (CSR + SoA) ----
 // Layout memory-bound (Hito 5): en vez de una lista ligada (head/nxt) sobre
@@ -502,6 +505,11 @@ struct Model {
     long foxes_hunted = 0;   // zorros abatidos por cacería humana
     long culpeos_hunted = 0, chillas_hunted = 0, hunt_outings = 0;   // desglose (régimen B)
     double dog_max_flock_dist = 0.0;   // diagnóstico: máxima distancia perro-centro de su rebaño tras moverse
+    // Resultados por estancia (H1-H3: redistribución de la depredación entre vecinos).
+    // Solo se acumulan; no alteran la simulación. fox_hours_* se llena si hay --farm-out.
+    std::vector<long> sheep_init_farm, sheep_killed_farm, culpeos_hunted_farm, chillas_hunted_farm, outings_farm;
+    std::vector<double> culpeo_hours_farm, chilla_hours_farm;
+    std::vector<char> hunt_farm_mask;  // vacío = todas las estancias cazan
     // Rastro olfativo: posición y paso de los eventos de depredación recientes.
     struct TrailEvent { double x, y; uint64_t step; };
     long n_trail = 0, n_herd = 0, n_chase = 0;
@@ -705,7 +713,8 @@ static void attempt_predation(Model& m, int fox_i, int prey_i, PRng& rng) {
     bool success = rng.unit() < p;
     if (success) { m.agents[prey_i].alive = false;
         feed_on(m.agents[fox_i], m.agents[prey_i]);   // A1: saciedad por biomasa
-        if (m.agents[prey_i].species == SHEEP) m.sheep_killed++;
+        if (m.agents[prey_i].species == SHEEP) { m.sheep_killed++;
+            const int pf = m.agents[prey_i].farm; if (pf >= 0 && pf < (int)m.sheep_killed_farm.size()) m.sheep_killed_farm[pf]++; }
         else if (m.agents[prey_i].species == HARE) m.hares_killed++; }
     else { m.agents[prey_i].fear = 1.0; m.agents[fox_i].hunger = std::min(m.agents[fox_i].hunger + 0.05, 1.0); }
 }
@@ -1082,6 +1091,10 @@ static long hunt_events_b(Model& m, uint64_t step, uint64_t seed) {
         PRng r(agent_seed(seed, day * 24, HUNT_SALT_B + (uint64_t)f));
         const int h = 8 + (int)(r.unit() * 9.0);                  // 8..16 h
         if (hour != h) continue;
+        if (!m.hunt_farm_mask.empty() && !m.hunt_farm_mask[f]) continue;   // esta estancia no caza
+        // régimen A: sale solo con prob. hunt_outing_prob (el sorteo existe solo si < 1,
+        // así el régimen B por defecto conserva su secuencia de números aleatorios)
+        if (P.hunt_outing_prob < 1.0 && r.unit() >= P.hunt_outing_prob) continue;
         // ovejas vivas de la estancia, agrupadas por unidad (potrero si hay; si no, la estancia)
         std::vector<std::vector<int>> by_unit(m.has_paddocks() ? m.n_units : 1);
         for (size_t k = 0; k < m.agents.size(); ++k) { const Animal& a = m.agents[k];
@@ -1091,12 +1104,14 @@ static long hunt_events_b(Model& m, uint64_t step, uint64_t seed) {
         const std::vector<int>& flock = by_unit[occ[(size_t)(r.unit() * occ.size())]];
         const Animal& ref = m.agents[flock[(size_t)(r.unit() * flock.size())]];
         const double hx = ref.x, hy = ref.y; m.hunt_outings++;
+        if (f < (int)m.outings_farm.size()) m.outings_farm[f]++;
         for (auto& a : m.agents) {
             if (!a.alive || a.species != FOX) continue;
             const double dx = a.x - hx, dy = a.y - hy;
             if (dx * dx + dy * dy > P.hunt_radius * P.hunt_radius) continue;
             const double p = a.is_chilla ? P.hunt_p_culpeo * P.hunt_chilla_ratio : P.hunt_p_culpeo;
-            if (r.unit() < p) { a.alive = false; shot++; (a.is_chilla ? m.chillas_hunted : m.culpeos_hunted)++; }
+            if (r.unit() < p) { a.alive = false; shot++; (a.is_chilla ? m.chillas_hunted : m.culpeos_hunted)++;
+                if (f < (int)m.culpeos_hunted_farm.size()) (a.is_chilla ? m.chillas_hunted_farm : m.culpeos_hunted_farm)[f]++; }
             else {
                 a.danger_zones.push_back({hx, hy, now, HUNT_FEAR_INTENSITY});
                 if (a.danger_zones.size() > 64) a.danger_zones.erase(a.danger_zones.begin());

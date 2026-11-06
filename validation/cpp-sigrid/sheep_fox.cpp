@@ -43,6 +43,22 @@ static double run_loss_rate(const Params& params_in, uint64_t seed, uint64_t n_d
     }
     build_model(params, seed, m, phaseA, phaseB, foxidx);
     load_cascos(m, params.cascos_path);   // casas reales (ancla de cacería); no-op si null
+    // Contadores por estancia (solo acumulan; no alteran la simulación).
+    { const size_t nf = (size_t)std::max(1, m.n_farms);
+      m.sheep_init_farm.assign(nf, 0); m.sheep_killed_farm.assign(nf, 0); m.outings_farm.assign(nf, 0);
+      m.culpeos_hunted_farm.assign(nf, 0); m.chillas_hunted_farm.assign(nf, 0);
+      m.culpeo_hours_farm.assign(nf, 0.0); m.chilla_hours_farm.assign(nf, 0.0);
+      for (auto& a : m.agents) if (a.alive && a.species == SHEEP) m.sheep_init_farm[a.farm]++; }
+    // Estancias que cazan (--hunt-farms "1,0,..."): mismo número de valores que estancias.
+    if (params.hunt_farms) {
+        const char* s = params.hunt_farms; m.hunt_farm_mask.clear();
+        while (*s) { char* e; long v = std::strtol(s, &e, 10);
+            if (e == s || (v != 0 && v != 1)) { std::fprintf(stderr, "abortando: --hunt-farms invalido: \"%s\"\n", params.hunt_farms); std::exit(2); }
+            m.hunt_farm_mask.push_back((char)v); s = (*e == ',') ? e + 1 : e;
+            if (*e && *e != ',') { std::fprintf(stderr, "abortando: --hunt-farms invalido: \"%s\"\n", params.hunt_farms); std::exit(2); } }
+        if ((int)m.hunt_farm_mask.size() != m.n_farms) { std::fprintf(stderr, "abortando: --hunt-farms da %zu estancias; el modelo tiene %d\n", m.hunt_farm_mask.size(), m.n_farms); std::exit(2); }
+    }
+    const bool farm_out = params.farm_out_path != nullptr;
     // Buffers reusados para la detección de zorros precomputada (Hito 4b).
     std::vector<std::vector<int>> fdprey(m.agents.size());
     std::vector<int> fdhares(m.agents.size(), 0);
@@ -75,9 +91,26 @@ static double run_loss_rate(const Params& params_in, uint64_t seed, uint64_t n_d
         if (hare_births(m, phaseA) > 0) { fdprey.resize(m.agents.size()); fdhares.resize(m.agents.size(), 0); }
         if (step % 24 == 0) hare_cull(m);
         hunt_events(m, step, seed);   // cacería humana (inerte si hunt_prob<=0)
+        // presencia de zorros por estancia (horas-zorro): mide el desplazamiento de H1
+        if (farm_out) for (auto& a : m.agents) if (a.alive && a.species == FOX) {
+            const int f = m.farm_of(a.x, a.y); (a.is_chilla ? m.chilla_hours_farm : m.culpeo_hours_farm)[f] += 1.0; }
         // término anticipado si no quedan ovejas
         bool any_sheep = false; for (auto& a : m.agents) if (a.alive && a.species == SHEEP) { any_sheep = true; break; }
         if (!any_sheep) break;
+    }
+    if (farm_out) {
+        FILE* fo = std::fopen(params.farm_out_path, "a");
+        if (!fo) { std::fprintf(stderr, "abortando: no pude abrir %s\n", params.farm_out_path); std::exit(2); }
+        std::fseek(fo, 0, SEEK_END);
+        if (std::ftell(fo) == 0) std::fprintf(fo, "seed,farm,hunts,sheep_init,sheep_killed,loss_pct,culpeo_hours,chilla_hours,outings,culpeos_hunted,chillas_hunted\n");
+        for (int f = 0; f < std::max(1, m.n_farms); ++f) {
+            const int hunts = m.params.hunt_mode == 1 ? (m.hunt_farm_mask.empty() ? 1 : (int)m.hunt_farm_mask[f]) : (m.params.hunt_prob > 0 ? 1 : 0);
+            std::fprintf(fo, "%llu,%d,%d,%ld,%ld,%.4f,%.0f,%.0f,%ld,%ld,%ld\n", (unsigned long long)seed, f, hunts,
+                         m.sheep_init_farm[f], m.sheep_killed_farm[f],
+                         m.sheep_init_farm[f] > 0 ? 100.0 * m.sheep_killed_farm[f] / m.sheep_init_farm[f] : 0.0,
+                         m.culpeo_hours_farm[f], m.chilla_hours_farm[f], m.outings_farm[f], m.culpeos_hunted_farm[f], m.chillas_hunted_farm[f]);
+        }
+        std::fclose(fo);   // se escribe al terminar cada semilla: persistencia incremental
     }
     if (getenv("SIGRID_DIAG")) {
         long nh = 0, ns = 0; double hare_e = 0;
@@ -130,6 +163,9 @@ int main(int argc, char** argv) {
     p.hunt_p_culpeo = darg("--hunt-p-culpeo", 0.0);
     p.hunt_chilla_ratio = darg("--hunt-chilla-ratio", p.hunt_chilla_ratio);
     p.hunt_radius = darg("--hunt-radius", p.hunt_radius);
+    p.hunt_outing_prob = darg("--hunt-outing-prob", p.hunt_outing_prob);   // régimen A: prob. baja de salir
+    p.hunt_farms = sarg("--hunt-farms");          // estancias que cazan "1,0,0,0,1"
+    p.farm_out_path = sarg("--farm-out");         // CSV por estancia y semilla
     days = (uint64_t)darg("--days", 30); seed0 = (uint64_t)darg("--seed", 1000); n_seeds = (uint64_t)darg("--seeds", 1);
     p.sheep_density = darg("--sheep-density", p.sheep_density);
     p.fox_density = darg("--fox-density", p.fox_density);
@@ -147,6 +183,8 @@ int main(int argc, char** argv) {
     if (p.hunt_mode != 0 && p.hunt_mode != 1) { std::fprintf(stderr, "abortando: --hunt-mode debe ser 0 o 1\n"); return 2; }
     if (p.hunt_mode == 1 && p.hunt_prob > 0) { std::fprintf(stderr, "abortando: --hunt-prob es del régimen 0; con --hunt-mode 1 usar --hunt-p-culpeo\n"); return 2; }
     if (p.hunt_mode == 1 && !(p.hunt_p_culpeo > 0 && p.hunt_p_culpeo <= 1)) { std::fprintf(stderr, "abortando: --hunt-mode 1 requiere 0 < --hunt-p-culpeo <= 1\n"); return 2; }
+    if (!(p.hunt_outing_prob > 0 && p.hunt_outing_prob <= 1)) { std::fprintf(stderr, "abortando: --hunt-outing-prob debe estar en (0, 1]\n"); return 2; }
+    if ((p.hunt_farms || p.hunt_outing_prob < 1) && p.hunt_mode != 1) { std::fprintf(stderr, "abortando: --hunt-farms y --hunt-outing-prob requieren --hunt-mode 1\n"); return 2; }
     if (p.hunt_chilla_ratio < 0 || p.hunt_p_culpeo * p.hunt_chilla_ratio > 1 || p.hunt_radius <= 0 || p.dog_leash < 0) { std::fprintf(stderr, "abortando: parámetros de cacería o correa fuera de rango\n"); return 2; }
 
     double sum = 0; int cnt = 0;
