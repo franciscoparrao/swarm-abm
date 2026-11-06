@@ -95,6 +95,11 @@ static double run_loss_rate(const Params& params_in, uint64_t seed, uint64_t n_d
         fprintf(stderr, "  [cercos] granjas %d | potreros %d | violaciones granja %ld | violaciones potrero %ld | zorros cazados %ld\n",
                 m.n_farms, m.n_units, viol_farm, viol_unit, m.foxes_hunted);
         if (m.has_paddocks()) { fprintf(stderr, "  [ovejas/potrero]"); for (int u = 0; u < m.n_units; ++u) fprintf(stderr, " u%d(f%d)=%ld", u, m.unit_farm[u], per_unit[u]); fprintf(stderr, "\n"); }
+        { long nc = 0, nch = 0;
+          for (auto& a : m.agents) if (a.alive && a.species == FOX) (a.is_chilla ? nch : nc)++;
+          fprintf(stderr, "  [caza] salidas %ld | culpeos cazados %ld | chillas cazadas %ld | vivos al final: culpeos %ld chillas %ld\n",
+                  m.hunt_outings, m.culpeos_hunted, m.chillas_hunted, nc, nch);
+          fprintf(stderr, "  [perro] distancia max. al centro de su rebaño: %.0f m (correa %.0f m)\n", m.dog_max_flock_dist, m.params.dog_leash); }
         if (!m.unit_season.empty()) { long s0 = 0, s1 = 0; for (int u = 0; u < m.n_units; ++u) (m.unit_season[u] == 0 ? s0 : s1) += per_unit[u];
             fprintf(stderr, "  [estacion] simulada %d | ovejas en invernada %ld | en veranada %ld\n", m.params.season_sim, s0, s1); }
         { std::vector<long> dpf(m.n_farms, 0); std::vector<long> dpu(std::max(1, m.n_units), 0);
@@ -120,6 +125,11 @@ int main(int argc, char** argv) {
     if (p.season_sim > 1) { std::fprintf(stderr, "abortando: --season-sim debe ser 0 o 1\n"); return 2; }
     p.dog_roam = darg("--dog-roam", 0) != 0;      // perro cruza cercos internos y sigue al grupo mayor
     p.dogs_farm = sarg("--dogs-farm");            // perros por estancia "n0,n1,..." (reemplaza --dogs)
+    p.dog_leash = darg("--dog-leash", 0.0);       // distancia máxima del perro al centro de su rebaño (m)
+    p.hunt_mode = (int)darg("--hunt-mode", 0);    // 1 = cacería régimen B
+    p.hunt_p_culpeo = darg("--hunt-p-culpeo", 0.0);
+    p.hunt_chilla_ratio = darg("--hunt-chilla-ratio", p.hunt_chilla_ratio);
+    p.hunt_radius = darg("--hunt-radius", p.hunt_radius);
     days = (uint64_t)darg("--days", 30); seed0 = (uint64_t)darg("--seed", 1000); n_seeds = (uint64_t)darg("--seeds", 1);
     p.sheep_density = darg("--sheep-density", p.sheep_density);
     p.fox_density = darg("--fox-density", p.fox_density);
@@ -133,6 +143,11 @@ int main(int argc, char** argv) {
     set_switch_lambda(darg("--switch-lambda", 1.0));  // fuerza del prey switching
     p.width = darg("--width", p.width);   // escalar el AREA a densidad constante
     p.height = darg("--height", p.height); // -> muchos agentes, pocos vecinos/query
+    // validaciones de cacería y correa: DESPUÉS de leer todos los flags (--hunt-prob incluido)
+    if (p.hunt_mode != 0 && p.hunt_mode != 1) { std::fprintf(stderr, "abortando: --hunt-mode debe ser 0 o 1\n"); return 2; }
+    if (p.hunt_mode == 1 && p.hunt_prob > 0) { std::fprintf(stderr, "abortando: --hunt-prob es del régimen 0; con --hunt-mode 1 usar --hunt-p-culpeo\n"); return 2; }
+    if (p.hunt_mode == 1 && !(p.hunt_p_culpeo > 0 && p.hunt_p_culpeo <= 1)) { std::fprintf(stderr, "abortando: --hunt-mode 1 requiere 0 < --hunt-p-culpeo <= 1\n"); return 2; }
+    if (p.hunt_chilla_ratio < 0 || p.hunt_p_culpeo * p.hunt_chilla_ratio > 1 || p.hunt_radius <= 0 || p.dog_leash < 0) { std::fprintf(stderr, "abortando: parámetros de cacería o correa fuera de rango\n"); return 2; }
 
     double sum = 0; int cnt = 0;
     for (uint64_t s = 0; s < n_seeds; ++s) {

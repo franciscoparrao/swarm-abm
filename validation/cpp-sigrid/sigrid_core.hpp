@@ -278,7 +278,14 @@ struct Params { double width = 2000, height = 2000, sheep_density = 0.96, fox_de
                 const char* season_path = nullptr;          // estación por unidad (0 invernada, 1 veranada); requiere potreros
                 int season_sim = -1;                        // estación simulada: el rebaño parte SOLO en sus unidades (-1 = inerte)
                 bool dog_roam = false;                      // perro confinado solo por la estancia; sigue al potrero con más ovejas
-                const char* dogs_farm = nullptr; };         // perros por estancia "n0,n1,..." (orden farm_id); reemplaza el round-robin de n_dogs
+                const char* dogs_farm = nullptr;            // perros por estancia "n0,n1,..." (orden farm_id); reemplaza el round-robin de n_dogs
+                double dog_leash = 0.0;                     // distancia máxima (m) del perro al centro de su rebaño (0 = sin límite)
+                // Cacería régimen B (Ana 2026-11-03/05): el ovejero sale lunes-sábado, de
+                // día, a un potrero con ovejas; mata con prob. por encuentro y por especie.
+                int hunt_mode = 0;                          // 0 = régimen anterior (casa, hunt_prob); 1 = régimen B
+                double hunt_p_culpeo = 0.0;                 // prob. de abatir un culpeo dentro del radio, por salida
+                double hunt_chilla_ratio = 0.05;            // prob. chilla = hunt_p_culpeo * ratio (cacería selectiva)
+                double hunt_radius = 500.0; };              // radio de detección/tiro del ovejero (m)
 
 // ---- espacio: índice de celdas sobre la instantánea (CSR + SoA) ----
 // Layout memory-bound (Hito 5): en vez de una lista ligada (head/nxt) sobre
@@ -493,6 +500,8 @@ struct Model {
     int current_hour = 0; uint64_t step_count = 0;
     long sheep_killed = 0, hares_killed = 0, predation_attempts = 0, att_sheep = 0, att_hare = 0;
     long foxes_hunted = 0;   // zorros abatidos por cacería humana
+    long culpeos_hunted = 0, chillas_hunted = 0, hunt_outings = 0;   // desglose (régimen B)
+    double dog_max_flock_dist = 0.0;   // diagnóstico: máxima distancia perro-centro de su rebaño tras moverse
     // Rastro olfativo: posición y paso de los eventos de depredación recientes.
     struct TrailEvent { double x, y; uint64_t step; };
     long n_trail = 0, n_herd = 0, n_chase = 0;
@@ -1054,7 +1063,52 @@ static const double HUNT_FEAR_INTENSITY = 1.0;     // intensidad del hotspot de 
 // sitio como zona peligrosa (hotspot de miedo que luego evita). Reusa la memoria de
 // danger_zones de los zorros. Con hunt_prob<=0 es inerte -> bit-idéntico. Secuencial,
 // agentes en orden de índice; RNG determinista (seed, step, salt+granja).
+// Régimen B (Ana 2026-11-03/05; Fotos_Personas.xlsx: 2/59 detecciones en domingo,
+// todas entre 7 y 17 h). Cada estancia, cada día salvo el domingo (día 0 = lunes,
+// SUPUESTO), a una hora al azar entre 8 y 16 h: el ovejero va a un potrero con
+// ovejas (al azar entre los ocupados de su estancia) y se ubica junto a una oveja al
+// azar de ese potrero. Cada zorro dentro de hunt_radius muere con prob. hunt_p_culpeo
+// (culpeo) o hunt_p_culpeo*hunt_chilla_ratio (chilla); si sobrevive, memoriza el
+// sitio como zona peligrosa. RNG propio por (seed, día, granja) -> no altera el de
+// los agentes. Inerte si hunt_mode != 1.
+static const uint64_t HUNT_SALT_B = 0xE000000000000000ULL;
+static long hunt_events_b(Model& m, uint64_t step, uint64_t seed) {
+    const Params& P = m.params;
+    if (P.hunt_mode != 1 || P.hunt_p_culpeo <= 0.0) return 0;
+    const uint64_t day = step / 24; const int hour = (int)(step % 24);
+    if (day % 7 == 6) return 0;                                   // domingo
+    long shot = 0; const uint64_t now = m.step_count;
+    for (int f = 0; f < m.n_farms; ++f) {
+        PRng r(agent_seed(seed, day * 24, HUNT_SALT_B + (uint64_t)f));
+        const int h = 8 + (int)(r.unit() * 9.0);                  // 8..16 h
+        if (hour != h) continue;
+        // ovejas vivas de la estancia, agrupadas por unidad (potrero si hay; si no, la estancia)
+        std::vector<std::vector<int>> by_unit(m.has_paddocks() ? m.n_units : 1);
+        for (size_t k = 0; k < m.agents.size(); ++k) { const Animal& a = m.agents[k];
+            if (a.alive && a.species == SHEEP && (m.n_farms <= 1 || a.farm == f)) by_unit[m.has_paddocks() ? a.unit : 0].push_back((int)k); }
+        std::vector<int> occ; for (int u = 0; u < (int)by_unit.size(); ++u) if (!by_unit[u].empty()) occ.push_back(u);
+        if (occ.empty()) continue;
+        const std::vector<int>& flock = by_unit[occ[(size_t)(r.unit() * occ.size())]];
+        const Animal& ref = m.agents[flock[(size_t)(r.unit() * flock.size())]];
+        const double hx = ref.x, hy = ref.y; m.hunt_outings++;
+        for (auto& a : m.agents) {
+            if (!a.alive || a.species != FOX) continue;
+            const double dx = a.x - hx, dy = a.y - hy;
+            if (dx * dx + dy * dy > P.hunt_radius * P.hunt_radius) continue;
+            const double p = a.is_chilla ? P.hunt_p_culpeo * P.hunt_chilla_ratio : P.hunt_p_culpeo;
+            if (r.unit() < p) { a.alive = false; shot++; (a.is_chilla ? m.chillas_hunted : m.culpeos_hunted)++; }
+            else {
+                a.danger_zones.push_back({hx, hy, now, HUNT_FEAR_INTENSITY});
+                if (a.danger_zones.size() > 64) a.danger_zones.erase(a.danger_zones.begin());
+            }
+        }
+    }
+    m.foxes_hunted += shot;
+    return shot;
+}
+
 static long hunt_events(Model& m, uint64_t step, uint64_t seed) {
+    if (m.params.hunt_mode == 1) return hunt_events_b(m, step, seed);
     if (m.params.hunt_prob <= 0.0 || step % 24 != 0) return 0;
     long shot = 0; const uint64_t now = m.step_count;
     for (int f = 0; f < m.n_farms; ++f) {
@@ -1084,6 +1138,50 @@ static long hunt_events(Model& m, uint64_t step, uint64_t seed) {
 // ---- perro guardián (determinista) ----
 static void step_dog(Model& m, int i) {
     Animal& dog = m.agents[i];
+    // centroide del rebaño (posiciones vivas). Se calcula al inicio (solo lee) para
+    // que la correa (dog_leash) pueda acotar TODOS los movimientos del perro.
+    double cx = 0, cy = 0, n = 0;
+    // El rebaño del perro: las ovejas de su cerco (granja; potrero si hay potreros,
+    // porque el perro tampoco cruza el cerco interno y no puede arrear lo que no alcanza).
+    // Con dog_roam el perro sigue al grupo más grande de su estancia: el potrero con más
+    // ovejas vivas (Ana 2026-11-03: "tiende a estar con el grupo más grande, pero se
+    // mueve todo el tiempo"). Se recalcula cada paso; empate -> menor id de unidad.
+    int flock_unit = dog.unit;
+    if (m.has_paddocks() && m.params.dog_roam) {
+        std::vector<int> cnt(m.n_units, 0);
+        for (auto& a : m.agents) if (a.alive && a.species == SHEEP && a.farm == dog.farm) cnt[a.unit]++;
+        int best = -1; for (int u = 0; u < m.n_units; ++u) if (cnt[u] > 0 && (best < 0 || cnt[u] > cnt[best])) best = u;
+        if (best >= 0) flock_unit = best;
+    }
+    auto my_flock = [&](const Animal& a) { return m.has_paddocks() ? (a.unit == flock_unit) : (m.n_farms <= 1 || a.farm == dog.farm); };
+    for (auto& a : m.agents) if (a.alive && a.species == SHEEP && my_flock(a)) { cx += a.x; cy += a.y; n += 1; }
+    const double flx = n > 0 ? cx / n : dog.patrol_cx, fly = n > 0 ? cy / n : dog.patrol_cy;
+    // Correa: el perro no se aleja más de dog_leash del centro de su rebaño (radio del
+    // ámbito de hogar de collares GPS: 475 ha -> 1230 m; IC 271-680 ha -> 929-1471 m).
+    // Si el destino sale del círculo: estando dentro, el perro avanza solo hasta el
+    // borde por su misma trayectoria; estando fuera (el rebaño cambió de potrero),
+    // vuelve hacia el centro con el largo de paso que traía. Nunca avanza más que su
+    // paso (sin saltos). Con dog_leash<=0 es move_fenced.
+    auto mv = [&](double nx, double ny) {
+        const double L = m.params.dog_leash;
+        if (L > 0.0 && n > 0) {
+            const double ex = nx - flx, ey = ny - fly;
+            if (ex * ex + ey * ey > L * L) {
+                const double ox = dog.x - flx, oy = dog.y - fly, od = std::sqrt(ox * ox + oy * oy);
+                const double sx = nx - dog.x, sy = ny - dog.y, s = std::sqrt(sx * sx + sy * sy);
+                if (od <= L) {   // cruce del segmento perro->destino con el círculo: |o + t*s| = L, t en [0,1]
+                    const double a = sx * sx + sy * sy, b = 2.0 * (ox * sx + oy * sy), c = ox * ox + oy * oy - L * L;
+                    const double t = a > 0 ? (-b + std::sqrt(std::max(0.0, b * b - 4.0 * a * c))) / (2.0 * a) : 0.0;
+                    nx = dog.x + sx * t; ny = dog.y + sy * t;
+                } else {         // fuera: volver hacia el centro del rebaño sin pasarse
+                    const double st = std::min(s, od);
+                    nx = dog.x - ox / od * st; ny = dog.y - oy / od * st;
+                }
+            }
+        }
+        move_fenced(m, dog, nx, ny);
+        if (n > 0) { const double ex = dog.x - flx, ey = dog.y - fly; m.dog_max_flock_dist = std::max(m.dog_max_flock_dist, std::sqrt(ex * ex + ey * ey)); }
+    };
     // detectar zorro más cercano en DOG_DETECTION_RADIUS (snapshot)
     double best = 1e300, bx = 0, by = 0; int best_id = -1;
     {
@@ -1104,7 +1202,7 @@ static void step_dog(Model& m, int i) {
     if (best_id >= 0) { m.n_chase++;
         double to_x = bx - dog.x, to_y = by - dog.y, tolen = std::sqrt(to_x * to_x + to_y * to_y);
         double step = std::min(DOG_SPEED_CHASE, tolen), ux = to_x, uy = to_y; norm(ux, uy);
-        move_fenced(m, dog, dog.x + ux * step, dog.y + uy * step);
+        mv(dog.x + ux * step, dog.y + uy * step);
         double cdx = dog.x - bx, cdy = dog.y - by;
         if (best < DOG_CHASE_RADIUS && std::sqrt(cdx * cdx + cdy * cdy) < DOG_DETER_RADIUS) {
             // disuasión multi-objetivo: el objetivo + otros zorros dentro de
@@ -1151,27 +1249,10 @@ static void step_dog(Model& m, int i) {
         if (best_step >= 0) { m.n_trail++;   // investigar: se acerca a velocidad de patrulla
             double dx = tx - dog.x, dy = ty - dog.y, len = std::sqrt(dx * dx + dy * dy);
             const double stp = std::min(DOG_SPEED_PATROL, len); norm(dx, dy);
-            move_fenced(m, dog, dog.x + dx * stp, dog.y + dy * stp);
+            mv(dog.x + dx * stp, dog.y + dy * stp);
             return;
         }
     }
-    // centroide del rebaño (posiciones vivas)
-    double cx = 0, cy = 0, n = 0;
-    // El rebaño del perro: las ovejas de su cerco (granja; potrero si hay potreros,
-    // porque el perro tampoco cruza el cerco interno y no puede arrear lo que no alcanza).
-    // Con dog_roam el perro sigue al grupo más grande de su estancia: el potrero con más
-    // ovejas vivas (Ana 2026-11-03: "tiende a estar con el grupo más grande, pero se
-    // mueve todo el tiempo"). Se recalcula cada paso; empate -> menor id de unidad.
-    int flock_unit = dog.unit;
-    if (m.has_paddocks() && m.params.dog_roam) {
-        std::vector<int> cnt(m.n_units, 0);
-        for (auto& a : m.agents) if (a.alive && a.species == SHEEP && a.farm == dog.farm) cnt[a.unit]++;
-        int best = -1; for (int u = 0; u < m.n_units; ++u) if (cnt[u] > 0 && (best < 0 || cnt[u] > cnt[best])) best = u;
-        if (best >= 0) flock_unit = best;
-    }
-    auto my_flock = [&](const Animal& a) { return m.has_paddocks() ? (a.unit == flock_unit) : (m.n_farms <= 1 || a.farm == dog.farm); };
-    for (auto& a : m.agents) if (a.alive && a.species == SHEEP && my_flock(a)) { cx += a.x; cy += a.y; n += 1; }
-    double flx = n > 0 ? cx / n : dog.patrol_cx, fly = n > 0 ? cy / n : dog.patrol_cy;
     // (3) arreo: si hay ovejas lejos del centro, el perro se pone POR DETRÁS de
     // la más alejada (a 50 m en la dirección opuesta al rebaño) para empujarla.
     if (n > 1) {
@@ -1187,7 +1268,7 @@ static void step_dog(Model& m, int i) {
                 const double bx = t.x + (dx / dist) * 50.0, by = t.y + (dy / dist) * 50.0;
                 double mx = bx - dog.x, my = by - dog.y; const double len = std::sqrt(mx * mx + my * my);
                 const double stp = std::min(DOG_SPEED_PATROL, len); norm(mx, my);
-                move_fenced(m, dog, dog.x + mx * stp, dog.y + my * stp);
+                mv(dog.x + mx * stp, dog.y + my * stp);
                 return;
             }
         }
@@ -1195,7 +1276,7 @@ static void step_dog(Model& m, int i) {
     dog.patrol_angle += 0.1;
     double tx = flx + std::cos(dog.patrol_angle) * DOG_PATROL_RADIUS, ty = fly + std::sin(dog.patrol_angle) * DOG_PATROL_RADIUS;
     double dx = tx - dog.x, dy = ty - dog.y; norm(dx, dy);
-    move_fenced(m, dog, dog.x + dx * DOG_SPEED_PATROL, dog.y + dy * DOG_SPEED_PATROL);
+    mv(dog.x + dx * DOG_SPEED_PATROL, dog.y + dy * DOG_SPEED_PATROL);
 }
 
 // ---- construcción de la población (idéntica en serial/OMP y BSPonMPI) ----
