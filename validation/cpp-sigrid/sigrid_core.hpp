@@ -288,7 +288,12 @@ struct Params { double width = 2000, height = 2000, sheep_density = 0.96, fox_de
                 double hunt_radius = 500.0;                 // radio de detección/tiro del ovejero (m)
                 double hunt_outing_prob = 1.0;              // prob. de salir cada día hábil (1 = régimen B; baja + p alta = régimen A)
                 const char* hunt_farms = nullptr;           // estancias que cazan "1,0,0,0,1" (orden farm_id); nullptr = todas
-                const char* farm_out_path = nullptr; };     // CSV de resultados por estancia (se agrega una fila por semilla y estancia)
+                const char* farm_out_path = nullptr;        // CSV de resultados por estancia (se agrega una fila por semilla y estancia)
+                // Vegetación real: sobrescribe los rásters sintéticos DESPUÉS de generarlos
+                // (build_rasters consume el RNG de build; así el resto de la población es idéntico).
+                const char* veg_quality_path = nullptr;     // calidad de forraje 0-1 (formato .farms, fila 0 = sur)
+                const char* veg_cover_path = nullptr;       // cobertura vegetal 0-1 (mismo formato)
+                double cover_effect = 0.05; };              // coef. de la cobertura en la prob. de captura (Paper 1: +0,05)
 
 // ---- espacio: índice de celdas sobre la instantánea (CSR + SoA) ----
 // Layout memory-bound (Hito 5): en vez de una lista ligada (head/nxt) sobre
@@ -691,7 +696,10 @@ static void step_sheep(Model& m, int i, PRng& rng) {
 static double predation_probability(Model& m, int fox_i, int prey_i) {
     Animal& fox = m.agents[fox_i]; Animal& prey = m.agents[prey_i];
     double p_base = fox.predation_eff * prey.vulnerability;
-    double m_cover = 0.05 * m.veg_cover.get(fox.x, fox.y);
+    // Cobertura en la captura: +0,05 por defecto (Paper 1: emboscada). Yusti-Muñoz (2026)
+    // encuentra MÁS depredación en suelo desnudo en estancias sin perro, es decir el signo
+    // contrario; --cover-effect permite barrerlo (incluido negativo) sin tocar el default.
+    double m_cover = m.params.cover_effect * m.veg_cover.get(fox.x, fox.y);
     double dnd = m.nearest_dog_dist(fox.x, fox.y, 500.0);
     double m_dog = (dnd >= 0) ? -DOG_PROTECTION_STRENGTH * (1.0 - dnd / 500.0) : 0.0;
     double nearby = 0;
@@ -1591,6 +1599,32 @@ static bool load_season(Model& m, const char* path) {
         if (!has0 || !has1) { std::fprintf(stderr, "load_season: la estancia %d no tiene unidades de ambas estaciones\n", f); return false; }
     }
     m.unit_season = s;
+    return true;
+}
+
+// Carga un ráster de vegetación (calidad o cobertura) en el formato de .farms
+// ("cols rows cellsize" + cols*rows valores, row-major, fila 0 = SUR) y SOBRESCRIBE
+// `r`, que ya viene dimensionado por build_rasters (fila 0 = NORTE, como Raster::get).
+// Exige la misma grilla (cols, rows, celda = CELL_SIZE) y valores en [0, 1].
+// Devuelve false (con mensaje) ante cualquier error: el driver debe ABORTAR.
+static bool load_veg_raster(Raster& r, const char* path, const char* what) {
+    if (!path) return false;
+    FILE* fp = std::fopen(path, "r");
+    if (!fp) { std::fprintf(stderr, "load_veg_raster(%s): no pude abrir %s\n", what, path); return false; }
+    int cols = 0, rows = 0; double csz = 0.0;
+    if (std::fscanf(fp, "%d %d %lf", &cols, &rows, &csz) != 3 || cols != r.cols || rows != r.rows || std::fabs(csz - CELL_SIZE) > 1e-9) {
+        std::fprintf(stderr, "load_veg_raster(%s): la grilla de %s (%dx%d @%.1f) no coincide con la del motor (%dx%d @%.1f)\n",
+                     what, path, cols, rows, csz, r.cols, r.rows, CELL_SIZE); std::fclose(fp); return false;
+    }
+    std::vector<double> d((size_t)cols * rows);
+    for (int rs = 0; rs < rows; ++rs) for (int c = 0; c < cols; ++c) {   // rs = fila desde el sur
+        double v;
+        if (std::fscanf(fp, "%lf", &v) != 1 || !(v >= 0.0 && v <= 1.0)) {
+            std::fprintf(stderr, "load_veg_raster(%s): valor inválido en fila %d col %d de %s\n", what, rs, c, path); std::fclose(fp); return false; }
+        d[(size_t)(rows - 1 - rs) * cols + c] = v;                     // a fila desde el norte
+    }
+    std::fclose(fp);
+    r.data = std::move(d);
     return true;
 }
 

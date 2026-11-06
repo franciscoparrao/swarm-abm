@@ -43,6 +43,12 @@ static double run_loss_rate(const Params& params_in, uint64_t seed, uint64_t n_d
     }
     build_model(params, seed, m, phaseA, phaseB, foxidx);
     load_cascos(m, params.cascos_path);   // casas reales (ancla de cacería); no-op si null
+    // Vegetación real: sobrescribe los rásters sintéticos ya generados (y ya usados para
+    // nada todavía: la población no depende de ellos). Si se pidió y no carga, ABORTAR.
+    if (params.veg_quality_path && !load_veg_raster(m.veg_quality, params.veg_quality_path, "calidad")) {
+        std::fprintf(stderr, "abortando: no se pudo cargar la calidad de forraje\n"); std::exit(2); }
+    if (params.veg_cover_path && !load_veg_raster(m.veg_cover, params.veg_cover_path, "cobertura")) {
+        std::fprintf(stderr, "abortando: no se pudo cargar la cobertura\n"); std::exit(2); }
     // Contadores por estancia (solo acumulan; no alteran la simulación).
     { const size_t nf = (size_t)std::max(1, m.n_farms);
       m.sheep_init_farm.assign(nf, 0); m.sheep_killed_farm.assign(nf, 0); m.outings_farm.assign(nf, 0);
@@ -119,6 +125,9 @@ static double run_loss_rate(const Params& params_in, uint64_t seed, uint64_t n_d
             if (a.species == SHEEP) ns++; }
         const double area_ha = (m.params.width * m.params.height) / 10000.0;
         fprintf(stderr, "  [dog] persecuciones %ld | rastro %ld | arreo %ld\n", m.n_chase, m.n_trail, m.n_herd);
+        { long nl = 0, ns_ = 0; for (auto& a : m.agents) if (a.alive && a.species == HARE) { nl++; if (m.veg_quality.get(a.x, a.y) <= 0.0) ns_++; }
+          fprintf(stderr, "  [liebres] vivas %ld (%.3f/ha del dominio) | en celdas de calidad 0 (mar) %ld | cazadas por zorros %ld | energía media %.1f\n",
+                  nl, nl / std::max(area_ha, 1.0), ns_, m.hares_killed, nh > 0 ? hare_e / nh : 0.0); }
         // cercos: violaciones (agente cercado fuera de su granja / potrero) y ovejas por unidad
         long viol_farm = 0, viol_unit = 0; std::vector<long> per_unit(std::max(1, m.n_units), 0);
         for (auto& a : m.agents) { if (!a.alive || (a.species != SHEEP && a.species != DOG)) continue;
@@ -166,6 +175,9 @@ int main(int argc, char** argv) {
     p.hunt_outing_prob = darg("--hunt-outing-prob", p.hunt_outing_prob);   // régimen A: prob. baja de salir
     p.hunt_farms = sarg("--hunt-farms");          // estancias que cazan "1,0,0,0,1"
     p.farm_out_path = sarg("--farm-out");         // CSV por estancia y semilla
+    p.veg_quality_path = sarg("--veg-quality");   // calidad de forraje real (formato .farms)
+    p.veg_cover_path = sarg("--veg-cover");       // cobertura real (formato .farms)
+    p.cover_effect = darg("--cover-effect", p.cover_effect);   // coef. cobertura en la captura (default +0,05)
     days = (uint64_t)darg("--days", 30); seed0 = (uint64_t)darg("--seed", 1000); n_seeds = (uint64_t)darg("--seeds", 1);
     p.sheep_density = darg("--sheep-density", p.sheep_density);
     p.fox_density = darg("--fox-density", p.fox_density);
