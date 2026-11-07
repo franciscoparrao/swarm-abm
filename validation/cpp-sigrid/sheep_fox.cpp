@@ -38,6 +38,11 @@ static double run_loss_rate(const Params& params_in, uint64_t seed, uint64_t n_d
     if (params.season_path && !load_season(m, params.season_path)) {
         std::fprintf(stderr, "abortando: no se pudo cargar la estacion\n"); std::exit(2);
     }
+    // Máscara de tierra: liebres y zorros no nacen ni entran al mar; densidades sobre
+    // tierra. Si se pidió y no carga, ABORTAR. Sin --land es un no-op -> bit-idéntico.
+    if (params.land_path && !load_land(m, params.land_path)) {
+        std::fprintf(stderr, "abortando: no se pudo cargar la máscara de tierra\n"); std::exit(2);
+    }
     if (params.dog_roam && !params.paddock_raster_path) {
         std::fprintf(stderr, "abortando: --dog-roam requiere --paddocks\n"); std::exit(2);
     }
@@ -125,6 +130,8 @@ static double run_loss_rate(const Params& params_in, uint64_t seed, uint64_t n_d
             if (a.species == SHEEP) ns++; }
         const double area_ha = (m.params.width * m.params.height) / 10000.0;
         fprintf(stderr, "  [dog] persecuciones %ld | rastro %ld | arreo %ld\n", m.n_chase, m.n_trail, m.n_herd);
+        { long hs = 0, fs = 0; for (auto& a : m.agents) if (a.alive && !m.land_mask.empty() && !m.is_land(a.x, a.y)) { if (a.species == HARE) hs++; if (a.species == FOX) fs++; }
+          if (!m.land_mask.empty()) fprintf(stderr, "  [tierra] área de tierra %.0f ha | liebres en el mar %ld | zorros en el mar %ld\n", m.land_area_ha, hs, fs); }
         { long nl = 0, ns_ = 0; for (auto& a : m.agents) if (a.alive && a.species == HARE) { nl++; if (m.veg_quality.get(a.x, a.y) <= 0.0) ns_++; }
           fprintf(stderr, "  [liebres] vivas %ld (%.3f/ha del dominio) | en celdas de calidad 0 (mar) %ld | cazadas por zorros %ld | energía media %.1f\n",
                   nl, nl / std::max(area_ha, 1.0), ns_, m.hares_killed, nh > 0 ? hare_e / nh : 0.0); }
@@ -178,6 +185,7 @@ int main(int argc, char** argv) {
     p.veg_quality_path = sarg("--veg-quality");   // calidad de forraje real (formato .farms)
     p.veg_cover_path = sarg("--veg-cover");       // cobertura real (formato .farms)
     p.cover_effect = darg("--cover-effect", p.cover_effect);   // coef. cobertura en la captura (default +0,05)
+    p.land_path = sarg("--land");                 // máscara de tierra 0/1 (formato .farms)
     days = (uint64_t)darg("--days", 30); seed0 = (uint64_t)darg("--seed", 1000); n_seeds = (uint64_t)darg("--seeds", 1);
     p.sheep_density = darg("--sheep-density", p.sheep_density);
     p.fox_density = darg("--fox-density", p.fox_density);

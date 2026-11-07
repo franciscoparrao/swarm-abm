@@ -293,7 +293,8 @@ struct Params { double width = 2000, height = 2000, sheep_density = 0.96, fox_de
                 // (build_rasters consume el RNG de build; así el resto de la población es idéntico).
                 const char* veg_quality_path = nullptr;     // calidad de forraje 0-1 (formato .farms, fila 0 = sur)
                 const char* veg_cover_path = nullptr;       // cobertura vegetal 0-1 (mismo formato)
-                double cover_effect = 0.05; };              // coef. de la cobertura en la prob. de captura (Paper 1: +0,05)
+                double cover_effect = 0.05;                 // coef. de la cobertura en la prob. de captura (Paper 1: +0,05)
+                const char* land_path = nullptr; };         // máscara de tierra (1) / mar (0), misma grilla que --farm-raster
 
 // ---- espacio: índice de celdas sobre la instantánea (CSR + SoA) ----
 // Layout memory-bound (Hito 5): en vez de una lista ligada (head/nxt) sobre
@@ -551,6 +552,16 @@ struct Model {
     std::vector<double> unit_weight;      // peso del reparto inicial (area real si hay .units; si no, celdas)
     std::vector<std::pair<double,double>> unit_center;  // centro del rebano inicial (punto interior si hay .units; si no, centroide)
     std::vector<int> unit_season;         // estación de cada unidad (0 invernada, 1 veranada); vacío si no se cargó
+    // Máscara de tierra (misma grilla que farm_raster): liebres y zorros no nacen ni
+    // entran al mar, y sus densidades se refieren al área de tierra. Vacía = todo es
+    // tierra (comportamiento anterior, bit-idéntico).
+    std::vector<uint8_t> land_mask; double land_area_ha = 0.0;
+    bool is_land(double x, double y) const {
+        if (land_mask.empty()) return true;
+        int cx = (int)(x / farm_csz); cx = cx < 0 ? 0 : (cx >= farm_cols ? farm_cols - 1 : cx);
+        int cy = (int)(y / farm_csz); cy = cy < 0 ? 0 : (cy >= farm_rows ? farm_rows - 1 : cy);
+        return land_mask[(size_t)cy * farm_cols + cx] != 0;
+    }
     bool has_paddocks() const { return !paddock_raster.empty(); }
     int unit_of(double x, double y) const {
         if (paddock_raster.empty()) return farm_of(x, y);
@@ -792,6 +803,7 @@ static bool fox_safest_direction(const Model& m, double px, double py, double se
                                  double& bdx, double& bdy) {
     auto risk_at = [&](double x, double y) -> double {
         if (x < 0 || x >= m.params.width || y < 0 || y >= m.params.height) return 1.0;
+        if (!m.is_land(x, y)) return 1.0;   // el mar, como fuera del dominio (sin máscara: nunca)
         return m.fox_perceived_risk(x, y);
     };
     double best_risk = risk_at(px, py); bdx = 0.0; bdy = 0.0; bool found = false;
@@ -820,7 +832,7 @@ static void fox_search_for_prey(Model& m, Animal& f, PRng& rng) {
         angle = std::atan2(mdy, mdx);
     }
     double nx = f.x + std::cos(angle) * FOX_SPEED_WALK, ny = f.y + std::sin(angle) * FOX_SPEED_WALK;
-    if (nx >= 0 && nx < m.params.width && ny >= 0 && ny < m.params.height) { f.x = nx; f.y = ny; }
+    if (nx >= 0 && nx < m.params.width && ny >= 0 && ny < m.params.height && m.is_land(nx, ny)) { f.x = nx; f.y = ny; }
 }
 
 static void step_fox(Model& m, int i, PRng& rng, const std::vector<int>& prey, int hares_nearby) {
@@ -840,7 +852,8 @@ static void step_fox(Model& m, int i, PRng& rng, const std::vector<int>& prey, i
     double level = std::min(base + amp * std::exp(-(dd0 * dd0) / (2.0 * sigma * sigma)), 1.0);
     if (rng.unit() >= level) return; // descanso
     if (f.hunger < HUNGER_THRESHOLD) { double a = rng.range(0.0, TAU), dd = rng.range(50.0, 200.0);
-        f.x = clampd(f.x + std::cos(a) * dd, 0, m.params.width); f.y = clampd(f.y + std::sin(a) * dd, 0, m.params.height); return; }
+        const double nx = clampd(f.x + std::cos(a) * dd, 0, m.params.width), ny = clampd(f.y + std::sin(a) * dd, 0, m.params.height);
+        if (m.is_land(nx, ny)) { f.x = nx; f.y = ny; } return; }
     // --- hunt --- (reordenado 2026-09-11 para reproducir Fox.hunt del Python:
     // detect -> select_target -> evaluate_risk(target) -> aborto -> approach ->
     // attempt. El C++ evaluaba el riesgo ANTES de detectar presa y en la posición
@@ -938,12 +951,12 @@ static void step_fox(Model& m, int i, PRng& rng, const std::vector<int>& prey, i
             double dgx, dgy;                                  // avoid_and_search()
             if (m.nearest_dog_pos(f.x, f.y, 1000.0, dgx, dgy)) {
                 double ax = f.x - dgx, ay = f.y - dgy; norm(ax, ay);
-                f.x = clampd(f.x + ax * FOX_SPEED_WALK, 0, m.params.width);
-                f.y = clampd(f.y + ay * FOX_SPEED_WALK, 0, m.params.height);
+                const double nx = clampd(f.x + ax * FOX_SPEED_WALK, 0, m.params.width), ny = clampd(f.y + ay * FOX_SPEED_WALK, 0, m.params.height);
+                if (m.is_land(nx, ny)) { f.x = nx; f.y = ny; }
             } else {
                 double a = rng.range(0.0, TAU);
-                f.x = clampd(f.x + std::cos(a) * FOX_SPEED_WALK, 0, m.params.width);
-                f.y = clampd(f.y + std::sin(a) * FOX_SPEED_WALK, 0, m.params.height);
+                const double nx = clampd(f.x + std::cos(a) * FOX_SPEED_WALK, 0, m.params.width), ny = clampd(f.y + std::sin(a) * FOX_SPEED_WALK, 0, m.params.height);
+                if (m.is_land(nx, ny)) { f.x = nx; f.y = ny; }
             }
             return;
         }
@@ -951,7 +964,8 @@ static void step_fox(Model& m, int i, PRng& rng, const std::vector<int>& prey, i
     // (e) approach_prey + intento si queda a tiro.
     double to_x = tx - f.x, to_y = ty - f.y; double tolen = std::sqrt(to_x * to_x + to_y * to_y);
     double step = std::min(FOX_SPEED_WALK, tolen); double ux = to_x, uy = to_y; norm(ux, uy);
-    f.x = clampd(f.x + ux * step, 0, m.params.width); f.y = clampd(f.y + uy * step, 0, m.params.height);
+    { const double nx = clampd(f.x + ux * step, 0, m.params.width), ny = clampd(f.y + uy * step, 0, m.params.height);
+      if (m.is_land(nx, ny)) { f.x = nx; f.y = ny; } }
     double adx = f.x - tx, ady = f.y - ty;
     if (std::sqrt(adx * adx + ady * ady) < FOX_ATTACK_RADIUS) {
         // Acecho/intercepción (mecanismo C++, NO presente en el Python del paper 1,
@@ -982,10 +996,12 @@ static void step_hare(Model& m, int i, PRng& rng) {
         double dx, dy;
         if (found) { dx = h.x - ppx; dy = h.y - ppy; norm(dx, dy); }
         else { double a = rng.range(0.0, TAU); dx = std::cos(a); dy = std::sin(a); }
-        h.x = clampd(h.x + dx * HARE_SPEED_FLEE, 0, m.params.width); h.y = clampd(h.y + dy * HARE_SPEED_FLEE, 0, m.params.height);
+        const double nx = clampd(h.x + dx * HARE_SPEED_FLEE, 0, m.params.width), ny = clampd(h.y + dy * HARE_SPEED_FLEE, 0, m.params.height);
+        if (m.is_land(nx, ny)) { h.x = nx; h.y = ny; }   // no entra al mar (sin máscara: siempre)
     } else {
         double dx, dy; food_direction(m.veg_quality, h.x, h.y, dx, dy);
-        h.x = clampd(h.x + dx * HARE_SPEED_NORMAL, 0, m.params.width); h.y = clampd(h.y + dy * HARE_SPEED_NORMAL, 0, m.params.height);
+        const double nx = clampd(h.x + dx * HARE_SPEED_NORMAL, 0, m.params.width), ny = clampd(h.y + dy * HARE_SPEED_NORMAL, 0, m.params.height);
+        if (m.is_land(nx, ny)) { h.x = nx; h.y = ny; }
         // forrajea: gana energía según la calidad del pastizal donde queda
         h.energy = std::min(100.0, h.energy + m.veg_quality.get(h.x, h.y) * HARE_FORAGE_GAIN);
     }
@@ -1011,6 +1027,7 @@ static void step_hare(Model& m, int i, PRng& rng) {
                 const double a = rng.range(0.0, TAU), d = rng.range(10.0, 50.0);
                 h.off_x[k] = clampd(h.x + std::cos(a) * d, 0, m.params.width);
                 h.off_y[k] = clampd(h.y + std::sin(a) * d, 0, m.params.height);
+                if (!m.is_land(h.off_x[k], h.off_y[k])) { h.off_x[k] = h.x; h.off_y[k] = h.y; }   // cría en el mar -> junto a la madre
             }
             h.days_since_repro = 0.0;
             h.energy -= HARE_REPRO_COST;
@@ -1051,7 +1068,8 @@ static int hare_births(Model& m, std::vector<int>& phaseA) {
 // mueren las de MENOR energía. El desempate es por índice, así que el conjunto
 // podado es único para un estado dado.
 static int hare_cull(Model& m) {
-    const double area_ha = (m.params.width * m.params.height) / 10000.0;
+    // capacidad de carga sobre el área de TIERRA si hay máscara (si no, el dominio)
+    const double area_ha = m.land_mask.empty() ? (m.params.width * m.params.height) / 10000.0 : m.land_area_ha;
     std::vector<int> live;
     for (size_t i = 0; i < m.agents.size(); ++i)
         if (m.agents[i].alive && m.agents[i].species == HARE) live.push_back((int)i);
@@ -1315,7 +1333,18 @@ static void build_model(const Params& params, uint64_t seed, Model& m,
     int n_sheep = std::max(1L, std::lround(params.sheep_density * area_ha));
     int n_lambs = (int)(n_sheep * params.lamb_proportion);
     int n_adults = n_sheep - n_lambs;
-    int n_foxes = (int)std::lround(params.fox_density * area_km2);
+    // Con máscara de tierra, las densidades de zorros y liebres se refieren al área de
+    // TIERRA (no al rectángulo con mar). Sin máscara, el área del dominio (como antes).
+    const double wild_km2 = m.land_mask.empty() ? area_km2 : m.land_area_ha / 100.0;
+    const double wild_ha  = m.land_mask.empty() ? area_ha  : m.land_area_ha;
+    // Posición inicial de zorros y liebres: uniforme en el dominio; con máscara se
+    // vuelve a sortear hasta caer en tierra (consume más RNG solo si hay máscara).
+    auto place_wild = [&](Animal& a) {
+        int tries = 0;
+        do { a.x = rng_build.range(0, params.width); a.y = rng_build.range(0, params.height); }
+        while (!m.is_land(a.x, a.y) && ++tries < 100000);
+    };
+    int n_foxes = (int)std::lround(params.fox_density * wild_km2);
 
     m.params = params; m.n_sheep_initial = n_sheep;
     build_rasters(params.width, params.height, rng_build, m.veg_quality, m.veg_cover);
@@ -1412,23 +1441,23 @@ static void build_model(const Params& params, uint64_t seed, Model& m,
     }
     for (int k = 0; k < n_foxes; ++k) {
         Animal a{}; a.species = FOX; a.alive = true; a.energy = 100; a.mother = -1;
-        a.x = rng_build.range(0, params.width); a.y = rng_build.range(0, params.height);
+        place_wild(a);
         a.hunger = rng_build.range(0.3, 0.7); a.risk_aversion = BASE_RISK_AVERSION + rng_build.range(-0.1, 0.1);
         a.predation_eff = params.fox_predation_effectiveness; a.territory_radius = FOX_TERRITORY_RADIUS;
         m.agents.push_back(a);
     }
-    int n_chillas = (int)std::lround(params.chilla_density * area_km2);
+    int n_chillas = (int)std::lround(params.chilla_density * wild_km2);
     for (int k = 0; k < n_chillas; ++k) {
         Animal a{}; a.species = FOX; a.is_chilla = true; a.alive = true; a.energy = 100; a.mother = -1;
-        a.x = rng_build.range(0, params.width); a.y = rng_build.range(0, params.height);
+        place_wild(a);
         a.hunger = rng_build.range(0.3, 0.7); a.risk_aversion = (BASE_RISK_AVERSION + rng_build.range(-0.1, 0.1)) * 0.7;
         a.predation_eff = params.fox_predation_effectiveness; a.territory_radius = CHILLA_TERRITORY_RADIUS;
         m.agents.push_back(a);
     }
-    int n_hares = (int)std::lround(params.hare_density * area_ha);
+    int n_hares = (int)std::lround(params.hare_density * wild_ha);
     for (int k = 0; k < n_hares; ++k) {
         Animal a{}; a.species = HARE; a.alive = true; a.mother = -1;
-        a.x = rng_build.range(0, params.width); a.y = rng_build.range(0, params.height);
+        place_wild(a);
         a.energy = rng_build.range(60, 100); a.age_days = rng_build.range(0, 365);
         a.mature = a.age_days * 24.0 >= HARE_MATURITY_AGE_H;
         a.vulnerability = a.mature ? HARE_VULN_MATURE : HARE_VULN_JUV;
@@ -1599,6 +1628,29 @@ static bool load_season(Model& m, const char* path) {
         if (!has0 || !has1) { std::fprintf(stderr, "load_season: la estancia %d no tiene unidades de ambas estaciones\n", f); return false; }
     }
     m.unit_season = s;
+    return true;
+}
+
+// Carga la máscara de tierra: formato .farms, valores 0 (mar) / 1 (tierra), MISMA
+// grilla que el ráster de granjas. Fija land_area_ha. Llamar DESPUÉS de
+// load_farm_raster y ANTES de build_model. false (con mensaje) ante error.
+static bool load_land(Model& m, const char* path) {
+    if (!path) return false;
+    if (m.farm_raster.empty()) { std::fprintf(stderr, "load_land: requiere --farm-raster\n"); return false; }
+    FILE* fp = std::fopen(path, "r");
+    if (!fp) { std::fprintf(stderr, "load_land: no pude abrir %s\n", path); return false; }
+    int cols = 0, rows = 0; double csz = 0.0;
+    if (std::fscanf(fp, "%d %d %lf", &cols, &rows, &csz) != 3 || cols != m.farm_cols || rows != m.farm_rows || csz != m.farm_csz) {
+        std::fprintf(stderr, "load_land: la grilla de %s no coincide con la de granjas\n", path); std::fclose(fp); return false; }
+    std::vector<uint8_t> d((size_t)cols * rows); long n_land = 0;
+    for (size_t i = 0; i < d.size(); ++i) {
+        int v;
+        if (std::fscanf(fp, "%d", &v) != 1 || (v != 0 && v != 1)) { std::fprintf(stderr, "load_land: valor inválido (celda %zu)\n", i); std::fclose(fp); return false; }
+        d[i] = (uint8_t)v; n_land += v;
+    }
+    std::fclose(fp);
+    if (n_land == 0) { std::fprintf(stderr, "load_land: la máscara no tiene tierra\n"); return false; }
+    m.land_mask = std::move(d); m.land_area_ha = n_land * csz * csz / 10000.0;
     return true;
 }
 
