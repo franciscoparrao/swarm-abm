@@ -149,6 +149,7 @@ static double run_loss_rate(const Params& params_in, uint64_t seed, uint64_t n_d
           fprintf(stderr, "  [caza] salidas %ld | culpeos cazados %ld | chillas cazadas %ld | vivos al final: culpeos %ld chillas %ld\n",
                   m.hunt_outings, m.culpeos_hunted, m.chillas_hunted, nc, nch);
           fprintf(stderr, "  [perro] distancia max. al centro de su rebaño: %.0f m (correa %.0f m)\n", m.dog_max_flock_dist, m.params.dog_leash); }
+        fprintf(stderr, "  [cerco] regla %d | pasos de oveja desviados al rodear %ld | pasos sin salida %ld\n", m.params.fence_slide ? 1 : 0, m.fence_slides, m.fence_stuck);
         if (!m.unit_season.empty()) { long s0 = 0, s1 = 0; for (int u = 0; u < m.n_units; ++u) (m.unit_season[u] == 0 ? s0 : s1) += per_unit[u];
             fprintf(stderr, "  [estacion] simulada %d | ovejas en invernada %ld | en veranada %ld\n", m.params.season_sim, s0, s1); }
         { std::vector<long> dpf(m.n_farms, 0); std::vector<long> dpu(std::max(1, m.n_units), 0);
@@ -186,6 +187,9 @@ int main(int argc, char** argv) {
     p.veg_cover_path = sarg("--veg-cover");       // cobertura real (formato .farms)
     p.cover_effect = darg("--cover-effect", p.cover_effect);   // coef. cobertura en la captura (default +0,05)
     p.land_path = sarg("--land");                 // máscara de tierra 0/1 (formato .farms)
+    { const int fr = (int)darg("--fence-rule", 0);   // 0 = la oveja se detiene en el cerco; 1 = lo rodea
+      if (fr != 0 && fr != 1) { std::fprintf(stderr, "abortando: --fence-rule debe ser 0 o 1\n"); return 2; }
+      p.fence_slide = (fr == 1); }
     days = (uint64_t)darg("--days", 30); seed0 = (uint64_t)darg("--seed", 1000); n_seeds = (uint64_t)darg("--seeds", 1);
     p.sheep_density = darg("--sheep-density", p.sheep_density);
     p.fox_density = darg("--fox-density", p.fox_density);

@@ -294,7 +294,8 @@ struct Params { double width = 2000, height = 2000, sheep_density = 0.96, fox_de
                 const char* veg_quality_path = nullptr;     // calidad de forraje 0-1 (formato .farms, fila 0 = sur)
                 const char* veg_cover_path = nullptr;       // cobertura vegetal 0-1 (mismo formato)
                 double cover_effect = 0.05;                 // coef. de la cobertura en la prob. de captura (Paper 1: +0,05)
-                const char* land_path = nullptr; };         // máscara de tierra (1) / mar (0), misma grilla que --farm-raster
+                const char* land_path = nullptr;            // máscara de tierra (1) / mar (0), misma grilla que --farm-raster
+                bool fence_slide = false; };                // regla de cerco de la oveja: false = se detiene (0), true = lo rodea (1)
 
 // ---- espacio: índice de celdas sobre la instantánea (CSR + SoA) ----
 // Layout memory-bound (Hito 5): en vez de una lista ligada (head/nxt) sobre
@@ -511,6 +512,7 @@ struct Model {
     long foxes_hunted = 0;   // zorros abatidos por cacería humana
     long culpeos_hunted = 0, chillas_hunted = 0, hunt_outings = 0;   // desglose (régimen B)
     double dog_max_flock_dist = 0.0;   // diagnóstico: máxima distancia perro-centro de su rebaño tras moverse
+    long fence_slides = 0, fence_stuck = 0;   // diagnóstico regla de cerco 1: pasos desviados / sin salida (fase A: atómicos)
     // Resultados por estancia (H1-H3: redistribución de la depredación entre vecinos).
     // Solo se acumulan; no alteran la simulación. fox_hours_* se llena si hay --farm-out.
     std::vector<long> sheep_init_farm, sheep_killed_farm, culpeos_hunted_farm, chillas_hunted_farm, outings_farm;
@@ -635,6 +637,45 @@ static inline void move_fenced(Model& m, Animal& a, double nx, double ny) {
     } else if (m.n_farms > 1 && m.farm_of(nx, ny) != a.farm) return;
     a.x = nx; a.y = ny;
 }
+// ¿El cerco permite que `a` quede en (x,y)? Misma regla que move_fenced (x,y ya acotados).
+static inline bool fence_allows(const Model& m, const Animal& a, double x, double y) {
+    const bool by_unit = m.has_paddocks() && !(a.species == DOG && m.params.dog_roam);
+    if (by_unit) return m.unit_of(x, y) == a.unit;
+    return !(m.n_farms > 1 && m.farm_of(x, y) != a.farm);
+}
+
+// Movimiento de la oveja con el cerco. Regla 0 (default, Paper 1 y motor anterior):
+// si el paso cruzaría el cerco, la oveja no se mueve ese paso (queda contra el cerco).
+// Regla 1 (--fence-rule 1; A. Yusti-Muñoz 2026-11-10, respaldada en la literatura
+// según ella): el cerco es una frontera de acceso; la oveja no lo salta, lo RODEA, y
+// al alarmarse huye pero no necesariamente contra el cerco. Si el paso directo cruza,
+// prueba el mismo largo girado ±30°, ±60°, ±90° (y ±120°, ±150° al pastorear) y toma
+// el primero que no cruce; el lado que prueba primero se sortea con el RNG de la oveja
+// (sin sesgo de giro). Al huir nunca gira más de 90°: no se acerca al zorro. En una
+// esquina sin salida se queda. Inerte con regla 0 -> bit-idéntico.
+static void move_sheep(Model& m, Animal& s, double dx, double dy, double sp, PRng& rng, bool fleeing) {
+    const double nx = s.x + dx * sp, ny = s.y + dy * sp;
+    if (!m.params.fence_slide) { move_fenced(m, s, nx, ny); return; }
+    const double cx = clampd(nx, 0, m.params.width), cy = clampd(ny, 0, m.params.height);
+    if (fence_allows(m, s, cx, cy)) { s.x = cx; s.y = cy; return; }
+    const double max_deg = fleeing ? 90.0 : 150.0;
+    const double sgn = (rng.unit() < 0.5) ? 1.0 : -1.0;
+    for (double deg = 30.0; deg <= max_deg + 1e-9; deg += 30.0)
+        for (int k = 0; k < 2; ++k) {
+            const double th = (k == 0 ? sgn : -sgn) * deg * (TAU / 360.0);
+            const double rx = dx * std::cos(th) - dy * std::sin(th), ry = dx * std::sin(th) + dy * std::cos(th);
+            const double tx = clampd(s.x + rx * sp, 0, m.params.width), ty = clampd(s.y + ry * sp, 0, m.params.height);
+            if (fence_allows(m, s, tx, ty)) {
+                s.x = tx; s.y = ty;
+                #pragma omp atomic
+                m.fence_slides++;
+                return;
+            }
+        }
+    #pragma omp atomic
+    m.fence_stuck++;
+}
+
 // Misma unidad de cerco que el agente `a` para un vecino en (x,y): potrero si hay
 // raster de potreros, granja si no. Con n_farms<=1 siempre true -> bit-identico.
 static inline bool same_fence(const Model& m, const Animal& a, double x, double y) {
@@ -656,7 +697,7 @@ static void step_sheep(Model& m, int i, PRng& rng) {
         double dx, dy;
         if (found) { dx = s.x - ppx; dy = s.y - ppy; norm(dx, dy); }
         else { double a = rng.range(0.0, TAU); dx = std::cos(a); dy = std::sin(a); }
-        move_fenced(m, s, s.x + dx * sp, s.y + dy * sp);
+        move_sheep(m, s, dx, dy, sp, rng, true);
     } else {
         bool dog_near = m.nearest_dog_dist(s.x, s.y, DOG_PROXIMITY_VIGILANCE) >= 0;
         double p_move = dog_near ? (0.60 + 0.02) : (0.76 + 0.04);
@@ -695,7 +736,7 @@ static void step_sheep(Model& m, int i, PRng& rng) {
             double dy = vfy * 0.3 + vry * 0.2 + vcy * 0.2 + vdy * 0.3 + rng.normal(0.1);
             norm(dx, dy);
             double sp = s.is_lamb ? LAMB_SPEED : SHEEP_SPEED;
-            move_fenced(m, s, s.x + dx * sp, s.y + dy * sp);
+            move_sheep(m, s, dx, dy, sp, rng, false);
         }
     }
     if (s.is_lamb && s.age_days > LAMB_MATURATION_DAYS) { s.is_lamb = false; s.vulnerability = SHEEP_ADULT_VULN; }
