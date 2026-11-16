@@ -175,6 +175,7 @@ int main(int argc, char** argv) {
     if (p.season_sim > 1) { std::fprintf(stderr, "abortando: --season-sim debe ser 0 o 1\n"); return 2; }
     p.dog_roam = darg("--dog-roam", 0) != 0;      // perro cruza cercos internos y sigue al grupo mayor
     p.dogs_farm = sarg("--dogs-farm");            // perros por estancia "n0,n1,..." (reemplaza --dogs)
+    p.sheep_farm = sarg("--sheep-farm");          // ovejas adultas por estancia "n0,n1,..." (reemplaza --sheep-density)
     p.dog_leash = darg("--dog-leash", 0.0);       // distancia máxima del perro al centro de su rebaño (m)
     p.hunt_mode = (int)darg("--hunt-mode", 0);    // 1 = cacería régimen B
     p.hunt_p_culpeo = darg("--hunt-p-culpeo", 0.0);

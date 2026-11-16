@@ -279,6 +279,8 @@ struct Params { double width = 2000, height = 2000, sheep_density = 0.96, fox_de
                 int season_sim = -1;                        // estación simulada: el rebaño parte SOLO en sus unidades (-1 = inerte)
                 bool dog_roam = false;                      // perro confinado solo por la estancia; sigue al potrero con más ovejas
                 const char* dogs_farm = nullptr;            // perros por estancia "n0,n1,..." (orden farm_id); reemplaza el round-robin de n_dogs
+                const char* sheep_farm = nullptr;           // ovejas ADULTAS por estancia "n0,n1,..." (orden farm_id); reemplaza sheep_density.
+                                                            // Los corderos se agregan aparte: lamb_proportion sigue siendo su fracción del rebaño total
                 double dog_leash = 0.0;                     // distancia máxima (m) del perro al centro de su rebaño (0 = sin límite)
                 // Cacería régimen B (Ana 2026-11-03/05): el ovejero sale lunes-sábado, de
                 // día, a un potrero con ovejas; mata con prob. por encuentro y por especie.
@@ -1374,6 +1376,24 @@ static void build_model(const Params& params, uint64_t seed, Model& m,
     int n_sheep = std::max(1L, std::lround(params.sheep_density * area_ha));
     int n_lambs = (int)(n_sheep * params.lamb_proportion);
     int n_adults = n_sheep - n_lambs;
+    // --sheep-farm: adultas por estancia (Ana 2026-11-13: los números de cada estancia
+    // son adultos, sin corderos). Corderos por estancia = adultas * p/(1-p), así la
+    // fracción de corderos del rebaño total sigue siendo lamb_proportion (Paper 1: 0,2).
+    // Sin el flag, el camino original (densidad sobre el rectángulo) queda intacto.
+    std::vector<long> adults_f, lambs_f;
+    if (params.sheep_farm) {
+        const char* s = params.sheep_farm;
+        while (*s) { char* e; long n = std::strtol(s, &e, 10);
+            if (e == s || n < 0) { std::fprintf(stderr, "sheep_farm invalido: \"%s\"\n", params.sheep_farm); std::exit(2); }
+            adults_f.push_back(n); s = (*e == ',') ? e + 1 : e;
+            if (*e && *e != ',') { std::fprintf(stderr, "sheep_farm invalido: \"%s\"\n", params.sheep_farm); std::exit(2); } }
+        if (params.lamb_proportion < 0 || params.lamb_proportion >= 1) { std::fprintf(stderr, "abortando: lamb_proportion debe estar en [0,1) con sheep_farm\n"); std::exit(2); }
+        n_adults = 0; n_lambs = 0;
+        for (long a : adults_f) { long l = std::lround(a * params.lamb_proportion / (1.0 - params.lamb_proportion));
+            lambs_f.push_back(l); n_adults += (int)a; n_lambs += (int)l; }
+        n_sheep = n_adults + n_lambs;
+        if (n_sheep < 1) { std::fprintf(stderr, "abortando: sheep_farm sin ovejas\n"); std::exit(2); }
+    }
     // Con máscara de tierra, las densidades de zorros y liebres se refieren al área de
     // TIERRA (no al rectángulo con mar). Sin máscara, el área del dominio (como antes).
     const double wild_km2 = m.land_mask.empty() ? area_km2 : m.land_area_ha / 100.0;
@@ -1450,11 +1470,45 @@ static void build_model(const Params& params, uint64_t seed, Model& m,
         return best < 0 ? 0 : best;
     };
 
+    // Grupo inicial de cada adulta y cada cordero. Camino original: group_of_k sobre
+    // todos los grupos (sin cambios). Con sheep_farm: el mismo reparto proporcional,
+    // pero dentro de cada estancia y con su propio número de adultas y corderos.
+    // Geométrico, no consume RNG.
+    std::vector<int> adult_group(n_adults), lamb_group(n_lambs);
+    if (params.sheep_farm) {
+        if (!grouped || (int)adults_f.size() != m.n_farms) {
+            std::fprintf(stderr, "sheep_farm da %d estancias; el modelo tiene %d (requiere --farm-raster)\n", (int)adults_f.size(), m.n_farms); std::exit(2); }
+        auto farm_of_group = [&](int g) { return m.has_paddocks() ? m.unit_farm[g] : g; };
+        auto fill = [&](const std::vector<long>& cnt, std::vector<int>& out) {
+            int k0 = 0;
+            for (int f = 0; f < m.n_farms; ++f) {
+                double T = 0; for (int g = 0; g < n_groups; ++g) if (farm_of_group(g) == f) T += gw[g];
+                if (cnt[f] > 0 && T <= 0) { std::fprintf(stderr, "abortando: la estancia %d no tiene unidades activas para su rebaño\n", f); std::exit(2); }
+                for (long k = 0; k < cnt[f]; ++k) {
+                    double target = ((double)k + 0.5) / (double)cnt[f] * T, acc = 0; int gsel = -1;
+                    for (int g = 0; g < n_groups; ++g) if (farm_of_group(g) == f) { gsel = g; acc += gw[g]; if (target < acc) break; }
+                    out[k0++] = gsel;
+                }
+            }
+        };
+        fill(adults_f, adult_group); fill(lambs_f, lamb_group);
+    } else {
+        for (int k = 0; k < n_adults; ++k) adult_group[k] = group_of_k(k, n_adults);
+        for (int k = 0; k < n_lambs; ++k) lamb_group[k] = group_of_k(k, n_lambs);
+    }
+    // Con sheep_farm, una oveja que la dispersión inicial saca de su grupo (otro potrero
+    // u otra estancia) parte en el centro del grupo: el rebaño de cada estancia queda en
+    // su estancia. No consume RNG; solo con sheep_farm (camino original intacto).
+    auto out_of_group = [&](const Animal& a, int g) {
+        if (!params.sheep_farm) return false;
+        return m.has_paddocks() ? m.unit_of(a.x, a.y) != g : m.farm_of(a.x, a.y) != g;
+    };
+
     std::vector<int> adult_ids;                           // (n_farms==1)
     std::vector<std::vector<int>> adult_ids_f;            // (n_farms>1) por grupo
     if (grouped) adult_ids_f.resize(n_groups);
     for (int k = 0; k < n_adults; ++k) {
-        int f = group_of_k(k, n_adults);
+        int f = adult_group[k];
         double ax = grouped ? gc[f].first  : fcx;
         double ay = grouped ? gc[f].second : fcy;
         Animal a{}; a.species = SHEEP; a.alive = true; a.energy = 100; a.mother = -1;
@@ -1462,13 +1516,14 @@ static void build_model(const Params& params, uint64_t seed, Model& m,
         // con estación: si la dispersión de ±300 m la saca a una unidad de la otra
         // estación, parte en el centro de su grupo (no consume RNG; inerte sin estación).
         if (season_on && m.unit_season[m.unit_of(a.x, a.y)] != params.season_sim) { a.x = ax; a.y = ay; }
+        if (out_of_group(a, f)) { a.x = ax; a.y = ay; }
         a.age_days = rng_build.range(365, 2000); a.vulnerability = SHEEP_ADULT_VULN;
         int gid = (int)m.agents.size();
         if (grouped) adult_ids_f[f].push_back(gid); else adult_ids.push_back(gid);
         m.agents.push_back(a);
     }
     for (int k = 0; k < n_lambs; ++k) {
-        int f = group_of_k(k, n_lambs);
+        int f = lamb_group[k];
         std::vector<int>& ids = grouped ? adult_ids_f[f] : adult_ids;
         int mother = ids.empty() ? -1 : ids[(int)rng_build.range(0, (double)ids.size())];
         double bx = grouped ? gc[f].first : fcx;
@@ -1477,6 +1532,7 @@ static void build_model(const Params& params, uint64_t seed, Model& m,
         Animal a{}; a.species = SHEEP; a.alive = true; a.is_lamb = true; a.energy = 70; a.mother = mother;
         a.x = clampd(bx + rng_build.range(-20, 20), 0, params.width); a.y = clampd(by + rng_build.range(-20, 20), 0, params.height);
         if (season_on && m.unit_season[m.unit_of(a.x, a.y)] != params.season_sim) { a.x = bx; a.y = by; }
+        if (out_of_group(a, f)) { a.x = bx; a.y = by; }
         a.age_days = rng_build.range(0, 30); a.vulnerability = LAMB_VULN;
         m.agents.push_back(a);
     }
