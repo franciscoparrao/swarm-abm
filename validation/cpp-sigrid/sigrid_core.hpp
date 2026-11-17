@@ -1089,12 +1089,18 @@ static int hare_births(Model& m, std::vector<int>& phaseA) {
     int born = 0;
     const size_t n0 = m.agents.size();          // no iterar sobre las recién nacidas
     for (size_t i = 0; i < n0; ++i) {
-        Animal& h = m.agents[i];
-        if (!h.alive || h.species != HARE || h.pending_offspring <= 0) continue;
-        for (int k = 0; k < h.pending_offspring; ++k) {
+        // OJO: no guardar una referencia a m.agents[i] a través del push_back: si el
+        // vector se realoja, la referencia queda colgando (heap-use-after-free, visto
+        // con ASan el 2026-11-16 en 60 días con --sheep-farm). Se copia lo que se usa.
+        const Animal& h0 = m.agents[i];
+        if (!h0.alive || h0.species != HARE || h0.pending_offspring <= 0) continue;
+        const int np = h0.pending_offspring;
+        double ox[HARE_MAX_OFFSPRING], oy[HARE_MAX_OFFSPRING];
+        for (int k = 0; k < np; ++k) { ox[k] = h0.off_x[k]; oy[k] = h0.off_y[k]; }
+        for (int k = 0; k < np; ++k) {
             Animal a{};
             a.species = HARE; a.alive = true; a.mother = -1;
-            a.x = h.off_x[k]; a.y = h.off_y[k];
+            a.x = ox[k]; a.y = oy[k];
             a.energy = 80.0; a.age_days = 0.0; a.fear = 0.0;
             a.mature = false; a.vulnerability = HARE_VULN_JUV;
             a.days_since_repro = 0.0;
