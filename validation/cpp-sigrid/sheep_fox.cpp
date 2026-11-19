@@ -70,6 +70,17 @@ static double run_loss_rate(const Params& params_in, uint64_t seed, uint64_t n_d
         if ((int)m.hunt_farm_mask.size() != m.n_farms) { std::fprintf(stderr, "abortando: --hunt-farms da %zu estancias; el modelo tiene %d\n", m.hunt_farm_mask.size(), m.n_farms); std::exit(2); }
     }
     const bool farm_out = params.farm_out_path != nullptr;
+    // Contadores por potrero (--unit-out). Solo acumulan: no consumen RNG ni alteran la
+    // simulación. Requiere potreros; si se pide sin ellos, ABORTAR.
+    const bool unit_out = params.unit_out_path != nullptr;
+    if (unit_out) {
+        if (!m.has_paddocks()) { std::fprintf(stderr, "abortando: --unit-out requiere --paddocks\n"); std::exit(2); }
+        const size_t nu = (size_t)m.n_units;
+        m.sheep_init_unit.assign(nu, 0); m.lambs_init_unit.assign(nu, 0); m.sheep_killed_unit.assign(nu, 0); m.lambs_killed_unit.assign(nu, 0);
+        m.dog_hours_unit.assign(nu, 0.0); m.culpeo_hours_unit.assign(nu, 0.0); m.chilla_hours_unit.assign(nu, 0.0);
+        for (auto& a : m.agents) if (a.alive && a.species == SHEEP && a.unit >= 0 && a.unit < m.n_units) {
+            m.sheep_init_unit[a.unit]++; if (a.is_lamb) m.lambs_init_unit[a.unit]++; }
+    }
     // Buffers reusados para la detección de zorros precomputada (Hito 4b).
     std::vector<std::vector<int>> fdprey(m.agents.size());
     std::vector<int> fdhares(m.agents.size(), 0);
@@ -105,6 +116,10 @@ static double run_loss_rate(const Params& params_in, uint64_t seed, uint64_t n_d
         // presencia de zorros por estancia (horas-zorro): mide el desplazamiento de H1
         if (farm_out) for (auto& a : m.agents) if (a.alive && a.species == FOX) {
             const int f = m.farm_of(a.x, a.y); (a.is_chilla ? m.chilla_hours_farm : m.culpeo_hours_farm)[f] += 1.0; }
+        // horas-perro y horas-zorro por potrero (posición al final del tick)
+        if (unit_out) for (auto& a : m.agents) if (a.alive && (a.species == DOG || a.species == FOX)) {
+            const int u = m.unit_of(a.x, a.y); if (u < 0 || u >= m.n_units) continue;
+            if (a.species == DOG) m.dog_hours_unit[u] += 1.0; else (a.is_chilla ? m.chilla_hours_unit : m.culpeo_hours_unit)[u] += 1.0; }
         // término anticipado si no quedan ovejas
         bool any_sheep = false; for (auto& a : m.agents) if (a.alive && a.species == SHEEP) { any_sheep = true; break; }
         if (!any_sheep) break;
@@ -122,6 +137,17 @@ static double run_loss_rate(const Params& params_in, uint64_t seed, uint64_t n_d
                          m.culpeo_hours_farm[f], m.chilla_hours_farm[f], m.outings_farm[f], m.culpeos_hunted_farm[f], m.chillas_hunted_farm[f]);
         }
         std::fclose(fo);   // se escribe al terminar cada semilla: persistencia incremental
+    }
+    if (unit_out) {
+        FILE* fu = std::fopen(params.unit_out_path, "a");
+        if (!fu) { std::fprintf(stderr, "abortando: no pude abrir %s\n", params.unit_out_path); std::exit(2); }
+        std::fseek(fu, 0, SEEK_END);
+        if (std::ftell(fu) == 0) std::fprintf(fu, "seed,unit,farm,season,sheep_init,lambs_init,sheep_killed,lambs_killed,dog_hours,culpeo_hours,chilla_hours\n");
+        for (int u = 0; u < m.n_units; ++u)
+            std::fprintf(fu, "%llu,%d,%d,%d,%ld,%ld,%ld,%ld,%.0f,%.0f,%.0f\n", (unsigned long long)seed, u, m.unit_farm[u],
+                         m.unit_season.empty() ? -1 : m.unit_season[u], m.sheep_init_unit[u], m.lambs_init_unit[u],
+                         m.sheep_killed_unit[u], m.lambs_killed_unit[u], m.dog_hours_unit[u], m.culpeo_hours_unit[u], m.chilla_hours_unit[u]);
+        std::fclose(fu);
     }
     if (getenv("SIGRID_DIAG")) {
         long nh = 0, ns = 0; double hare_e = 0;
@@ -184,6 +210,7 @@ int main(int argc, char** argv) {
     p.hunt_outing_prob = darg("--hunt-outing-prob", p.hunt_outing_prob);   // régimen A: prob. baja de salir
     p.hunt_farms = sarg("--hunt-farms");          // estancias que cazan "1,0,0,0,1"
     p.farm_out_path = sarg("--farm-out");         // CSV por estancia y semilla
+    p.unit_out_path = sarg("--unit-out");         // CSV por potrero y semilla (requiere --paddocks)
     p.veg_quality_path = sarg("--veg-quality");   // calidad de forraje real (formato .farms)
     p.veg_cover_path = sarg("--veg-cover");       // cobertura real (formato .farms)
     p.cover_effect = darg("--cover-effect", p.cover_effect);   // coef. cobertura en la captura (default +0,05)

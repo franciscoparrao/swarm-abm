@@ -291,6 +291,7 @@ struct Params { double width = 2000, height = 2000, sheep_density = 0.96, fox_de
                 double hunt_outing_prob = 1.0;              // prob. de salir cada día hábil (1 = régimen B; baja + p alta = régimen A)
                 const char* hunt_farms = nullptr;           // estancias que cazan "1,0,0,0,1" (orden farm_id); nullptr = todas
                 const char* farm_out_path = nullptr;        // CSV de resultados por estancia (se agrega una fila por semilla y estancia)
+                const char* unit_out_path = nullptr;        // CSV por potrero (requiere --paddocks): muertes, horas-perro y horas-zorro
                 // Vegetación real: sobrescribe los rásters sintéticos DESPUÉS de generarlos
                 // (build_rasters consume el RNG de build; así el resto de la población es idéntico).
                 const char* veg_quality_path = nullptr;     // calidad de forraje 0-1 (formato .farms, fila 0 = sur)
@@ -519,6 +520,9 @@ struct Model {
     // Solo se acumulan; no alteran la simulación. fox_hours_* se llena si hay --farm-out.
     std::vector<long> sheep_init_farm, sheep_killed_farm, culpeos_hunted_farm, chillas_hunted_farm, outings_farm;
     std::vector<double> culpeo_hours_farm, chilla_hours_farm;
+    // Contadores por potrero (--unit-out; vacíos si no se pidió): solo acumulan.
+    std::vector<long> sheep_init_unit, lambs_init_unit, sheep_killed_unit, lambs_killed_unit;
+    std::vector<double> dog_hours_unit, culpeo_hours_unit, chilla_hours_unit;
     std::vector<char> hunt_farm_mask;  // vacío = todas las estancias cazan
     // Rastro olfativo: posición y paso de los eventos de depredación recientes.
     struct TrailEvent { double x, y; uint64_t step; };
@@ -776,7 +780,9 @@ static void attempt_predation(Model& m, int fox_i, int prey_i, PRng& rng) {
     if (success) { m.agents[prey_i].alive = false;
         feed_on(m.agents[fox_i], m.agents[prey_i]);   // A1: saciedad por biomasa
         if (m.agents[prey_i].species == SHEEP) { m.sheep_killed++;
-            const int pf = m.agents[prey_i].farm; if (pf >= 0 && pf < (int)m.sheep_killed_farm.size()) m.sheep_killed_farm[pf]++; }
+            const int pf = m.agents[prey_i].farm; if (pf >= 0 && pf < (int)m.sheep_killed_farm.size()) m.sheep_killed_farm[pf]++;
+            const int pu = m.agents[prey_i].unit; if (pu >= 0 && pu < (int)m.sheep_killed_unit.size()) {
+                m.sheep_killed_unit[pu]++; if (m.agents[prey_i].is_lamb) m.lambs_killed_unit[pu]++; } }
         else if (m.agents[prey_i].species == HARE) m.hares_killed++; }
     else { m.agents[prey_i].fear = 1.0; m.agents[fox_i].hunger = std::min(m.agents[fox_i].hunger + 0.05, 1.0); }
 }
