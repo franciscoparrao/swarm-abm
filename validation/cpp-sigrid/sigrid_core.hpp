@@ -522,7 +522,7 @@ struct Model {
     std::vector<char> hunt_farm_mask;  // vacío = todas las estancias cazan
     // Rastro olfativo: posición y paso de los eventos de depredación recientes.
     struct TrailEvent { double x, y; uint64_t step; };
-    long n_trail = 0, n_herd = 0, n_chase = 0;
+    long n_trail = 0, n_herd = 0, n_chase = 0, n_between = 0;
     std::vector<TrailEvent> trail; int n_sheep_initial = 0;
 
     // Granjas (modelo multi-granja secuencial). Con n_farms<=1 el dominio es una
@@ -1289,7 +1289,21 @@ static void step_dog(Model& m, int i) {
             }
         }
     }
-    if (best_id >= 0) { m.n_chase++;
+    // Respuesta a la amenaza, como en el Python (dog.py::respond_to_threat): PERSEGUIR
+    // solo si el zorro más cercano está a menos de DOG_CHASE_RADIUS (200 m); si está más
+    // lejos, PONERSE ENTRE el zorro y el rebaño (0,6·zorro + 0,4·centro del rebaño) a
+    // velocidad de patrulla (position_between_threat_and_flock). Hasta c9752cd el puerto
+    // perseguía a cualquier zorro detectado (1200 m) a velocidad de persecución: con la
+    // densidad de zorros del paisaje el perro pasaba el 100 % del tiempo persiguiendo en
+    // el borde de la correa, lejos del rebaño (diagnóstico 2026-11-19). Sin ovejas en su
+    // rebaño (n == 0) el Python patrulla; aquí se sigue con la rutina sin amenaza.
+    if (best_id >= 0 && best >= DOG_CHASE_RADIUS && n > 0) { m.n_between++;
+        const double tx = bx * 0.6 + flx * 0.4, ty = by * 0.6 + fly * 0.4;
+        double ux = tx - dog.x, uy = ty - dog.y; const double dl = std::sqrt(ux * ux + uy * uy);
+        if (dl > 0) { const double st = std::min(DOG_SPEED_PATROL, dl); ux /= dl; uy /= dl; mv(dog.x + ux * st, dog.y + uy * st); }
+        return;
+    }
+    if (best_id >= 0 && best < DOG_CHASE_RADIUS) { m.n_chase++;
         double to_x = bx - dog.x, to_y = by - dog.y, tolen = std::sqrt(to_x * to_x + to_y * to_y);
         double step = std::min(DOG_SPEED_CHASE, tolen), ux = to_x, uy = to_y; norm(ux, uy);
         mv(dog.x + ux * step, dog.y + uy * step);

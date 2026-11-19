@@ -129,7 +129,7 @@ static double run_loss_rate(const Params& params_in, uint64_t seed, uint64_t n_d
             if (a.species == HARE) { nh++; hare_e += a.energy; }
             if (a.species == SHEEP) ns++; }
         const double area_ha = (m.params.width * m.params.height) / 10000.0;
-        fprintf(stderr, "  [dog] persecuciones %ld | rastro %ld | arreo %ld\n", m.n_chase, m.n_trail, m.n_herd);
+        fprintf(stderr, "  [dog] persecuciones %ld | entre zorro y rebano %ld | rastro %ld | arreo %ld\n", m.n_chase, m.n_between, m.n_trail, m.n_herd);
         { long hs = 0, fs = 0; for (auto& a : m.agents) if (a.alive && !m.land_mask.empty() && !m.is_land(a.x, a.y)) { if (a.species == HARE) hs++; if (a.species == FOX) fs++; }
           if (!m.land_mask.empty()) fprintf(stderr, "  [tierra] área de tierra %.0f ha | liebres en el mar %ld | zorros en el mar %ld\n", m.land_area_ha, hs, fs); }
         { long nl = 0, ns_ = 0; for (auto& a : m.agents) if (a.alive && a.species == HARE) { nl++; if (m.veg_quality.get(a.x, a.y) <= 0.0) ns_++; }
